@@ -14,7 +14,9 @@ function normalizeFrequencyDays(value) {
   return Math.max(1, Math.min(365, Number(value) || 1));
 }
 
-// Atomically reserve the right to send `lockKey`. Returns false when a previous send is still
+// Atomically reserve the right to send `lockKey`. The claim only sets a short `pendingUntil`; the
+// long `nextAllowedAt` window starts on commit, so a run killed mid-send (timeout, restart) retries
+// on the next run instead of being locked out for the whole frequency window. Returns false when a previous send is still
 // inside its frequency window, or when another worker is mid-send. The lock doc shares the
 // `appdata` collection and its unique `key` index: when the doc exists but is not yet due, the
 // filter misses and the upsert collides on that index (E11000), which is the "not granted" signal.
@@ -22,19 +24,25 @@ async function claimEmailLock(collection, lockKey, frequencyDays, meta, by) {
   const now = new Date();
   const key = emailSendLockKey(lockKey);
   const frequency = normalizeFrequencyDays(frequencyDays);
-  const nextAllowedAt = new Date(now.getTime() + frequency * DAY_MS);
   const pendingUntil = new Date(now.getTime() + EMAIL_LOCK_PENDING_MS);
   try {
     const doc = await collection.findOneAndUpdate(
       {
         key,
         $and: [
-          { $or: [{ nextAllowedAt: { $exists: false } }, { nextAllowedAt: { $lte: now } }] },
+          // An orphaned claim (claimed but never committed — the run died mid-send, or it predates
+          // claim-only-sets-pending) must not block retries for the whole frequency window.
+          { $or: [
+            { nextAllowedAt: { $exists: false } },
+            { nextAllowedAt: { $lte: now } },
+            { committedAt: { $exists: false } },
+            { $expr: { $lt: ['$committedAt', '$claimedAt'] } },
+          ] },
           { $or: [{ pendingUntil: { $exists: false } }, { pendingUntil: { $lte: now } }] },
         ],
       },
       {
-        $set: { key, lockKey, frequencyDays: frequency, nextAllowedAt, pendingUntil, claimedAt: now, claimedBy: String(by || 'engine').slice(0, 80), meta: meta && typeof meta === 'object' ? meta : {} },
+        $set: { key, lockKey, frequencyDays: frequency, pendingUntil, claimedAt: now, claimedBy: String(by || 'engine').slice(0, 80), meta: meta && typeof meta === 'object' ? meta : {} },
         $setOnInsert: { createdAt: now },
       },
       { upsert: true, returnDocument: 'after' }

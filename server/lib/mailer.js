@@ -23,6 +23,12 @@ function getMailer() {
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_SECURE,
+      pool: true,
+      maxConnections: 3,
+      // A hung SMTP socket must fail fast so one department cannot stall the whole run.
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
       auth: { user: SMTP_USER, pass: SMTP_PASS }
     });
   }

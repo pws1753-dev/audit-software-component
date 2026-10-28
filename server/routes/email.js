@@ -6,7 +6,7 @@ const { getCollection } = require('../lib/mongo');
 const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
 const { wrapAsync, requireAdmin, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
-const { emailSendLockKey, EMAIL_LOCK_PENDING_MS } = require('../lib/email-locks');
+const { emailSendLockKey, claimEmailLock } = require('../lib/email-locks');
 const { runEmailAutomation } = require('../lib/email-engine');
 
 function normalizeEmailLockItems(input) {
@@ -73,28 +73,16 @@ router.post('/log', wrapAsync(async (req, res) => {
 }));
 
 // POST /api/email/locks/claim
+// Claim only sets the short pending marker; the long nextAllowedAt window starts on commit (see email-locks.js).
 router.post('/locks/claim', wrapAsync(async (req, res) => {
   const locks = normalizeEmailLockItems(req.body && req.body.locks);
   if (!locks.length) return res.status(400).json({ ok: false, error: 'At least one email lock is required' });
   const collection = await getCollection();
-  const now = new Date();
-  const pendingUntil = new Date(now.getTime() + EMAIL_LOCK_PENDING_MS);
   const claimedBy = actorOf(req).slice(0, 80);
   const results = [];
   for (const item of locks) {
-    const key = emailSendLockKey(item.key);
-    const nextAllowedAt = new Date(now.getTime() + item.frequencyDays * 24 * 60 * 60 * 1000);
-    try {
-      const doc = await collection.findOneAndUpdate(
-        { key, $and: [{ $or: [{ nextAllowedAt: { $exists: false } }, { nextAllowedAt: { $lte: now } }] }, { $or: [{ pendingUntil: { $exists: false } }, { pendingUntil: { $lte: now } }] }] },
-        { $set: { key, lockKey: item.key, frequencyDays: item.frequencyDays, nextAllowedAt, pendingUntil, claimedAt: now, claimedBy, meta: item.meta }, $setOnInsert: { createdAt: now } },
-        { upsert: true, returnDocument: 'after' }
-      );
-      results.push({ key: item.key, granted: Boolean(doc) });
-    } catch (err) {
-      if (err && err.code === 11000) results.push({ key: item.key, granted: false });
-      else throw err;
-    }
+    const granted = await claimEmailLock(collection, item.key, item.frequencyDays, item.meta, claimedBy);
+    results.push({ key: item.key, granted });
   }
   res.json({ ok: true, locks: results });
 }));

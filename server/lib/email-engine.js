@@ -322,6 +322,8 @@ async function runEmailAutomation(options = {}) {
 
   for (const group of groups.values()) {
     const { bucket, deptCode, rows } = group;
+    // One department's failure (lock store hiccup, bad data) must not abort the departments after it.
+    try {
     const matchingMasterRecords = emailMaster.filter(m => deptMatches(depts, m.deptCode, deptCode) || deptMatches(depts, m.department, deptCode));
     const master = matchingMasterRecords.find(m => String(m.status || 'active').toLowerCase() !== 'inactive') || null;
     const masterRecord = master || matchingMasterRecords[0] || null;
@@ -431,6 +433,12 @@ async function runEmailAutomation(options = {}) {
       failed++;
       results.push({ bucket, dept: deptCode, deptName, ncCount: sendRows.length, status: 'failed', to, cc, error: err.message });
       logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: to.join(', '), cc: cc.join(', '), subject, status: 'failed', error: err.message, dept: deptCode, ncCount: sendRows.length, sentAt: new Date().toISOString() });
+    }
+    } catch (err) {
+      failed++;
+      console.error(`[AuditPro] Email automation: ${bucket} for ${deptCode} aborted:`, err);
+      results.push({ bucket, dept: deptCode, ncCount: rows.length, status: 'failed', error: err.message });
+      logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptCode} — ${rows.length} NC(s)`, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
     }
   }
 
