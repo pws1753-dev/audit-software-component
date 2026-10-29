@@ -32,7 +32,7 @@ const EMAIL_RULES_DEFAULTS = {
   ccHod: true,
   ccGlobal: true,
   types: { upcoming_reminder: true, delayed: true, escalation: true },
-  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 30 },
+  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 7 },
   suppressed: [],
   depts: {},
 };

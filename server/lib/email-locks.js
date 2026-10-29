@@ -38,6 +38,9 @@ async function claimEmailLock(collection, lockKey, frequencyDays, meta, by) {
           { $or: [
             { nextAllowedAt: { $exists: false } },
             { nextAllowedAt: { $lte: now } },
+            // Honour the *current* frequency setting: a lock committed under a longer interval
+            // (e.g. 30 days) must not keep blocking once the Email Center interval is shortened.
+            { lastSentAt: { $lte: new Date(now.getTime() - frequency * DAY_MS) } },
             { committedAt: { $exists: false } },
             { $expr: { $lt: ['$committedAt', '$claimedAt'] } },
           ] },

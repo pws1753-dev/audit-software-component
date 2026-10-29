@@ -9,8 +9,8 @@ const STEP_INDEX = { open: 0, 'in-progress': 1, delayed: 1, 'pending-closure': 2
 const ESCALATION = [
   ['Overdue 3-6d', 'Delayed NC email -> SPOC · Every 3rd day'],
   ['Overdue 7-14d', 'Escalation -> HOD (SPOC in CC) · Every 2 days'],
-  ['Overdue 15-21d', 'Escalation -> MD Sir (HOD + SPOC CC) · Monthly'],
-  ['Overdue 22d+', 'Escalation -> MD Sir (HOD + SPOC CC) · Monthly'],
+  ['Overdue 15-21d', 'Escalation -> MD Sir (HOD + SPOC CC) · Weekly'],
+  ['Overdue 22d+', 'Escalation -> MD Sir (HOD + SPOC CC) · Weekly'],
 ];
 const nowStamp = () => new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
