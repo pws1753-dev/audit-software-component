@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon } from '../components/UI';
-import { showToast, sanitize } from '../utils/helpers';
+import { showToast, sanitize, prepareUploadDataUrl } from '../utils/helpers';
 import { apiFetch } from '../utils/api';
 import { managerDeptCodes } from '../utils/dashboardHelpers';
 
@@ -18,7 +18,6 @@ function mediaSize(bytes) {
 }
 const mediaUrl = (m) => m.secure_url || m.url || '#';
 const isImage = (m) => m.file_type === 'image' || m.resource_type === 'image' || /\.(jpe?g|png|gif|webp|bmp)(\?|#|$)/i.test(mediaUrl(m));
-const readFileAsDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Read failed')); r.readAsDataURL(file); });
 
 export default function Media() {
   const { getMediaLibrary, getDepts, getEmailMaster, writeSyncKey, currentUser, refreshSync, setPageAction } = useApp();
@@ -93,7 +92,7 @@ export default function Media() {
       const added = [];
       for (const file of files) {
         if (file.size > MAX_UPLOAD_BYTES) { showToast(`${file.name} too large (max 20 MB)`); continue; }
-        const dataUrl = await readFileAsDataUrl(file);
+        const dataUrl = await prepareUploadDataUrl(file);
         const res = await apiFetch('/api/media/upload-base64', { method: 'POST', body: JSON.stringify({ data: dataUrl, filename: file.name, folder: 'auditpro' }) });
         const it = res.item || {};
         added.push({

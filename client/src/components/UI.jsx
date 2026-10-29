@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../utils/api';
-import { showToast, mediaUrl, isImageMedia } from '../utils/helpers';
+import { showToast, mediaUrl, isImageMedia, prepareUploadDataUrl } from '../utils/helpers';
 
 // Lucide icon wrapper — uses the globally loaded lucide library
 export function Icon({ name, className = '', style }) {
@@ -148,7 +148,6 @@ export function Toast() {
   return <div className="toast" id="app-toast" />;
 }
 
-const readFileAsDataUrl = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Read failed')); r.readAsDataURL(file); });
 const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 
 export function EvidenceUploader({ files, onChange, label = 'Evidence Photos' }) {
@@ -165,7 +164,7 @@ export function EvidenceUploader({ files, onChange, label = 'Evidence Photos' })
       const added = [];
       for (const file of picked) {
         if (file.size > MAX_EVIDENCE_BYTES) { showToast(`${file.name} too large (max 20 MB)`); continue; }
-        const dataUrl = await readFileAsDataUrl(file);
+        const dataUrl = await prepareUploadDataUrl(file);
         const res = await apiFetch('/api/media/upload-base64', { method: 'POST', body: JSON.stringify({ data: dataUrl, filename: file.name, folder: 'auditpro' }) });
         const it = res.item || {};
         added.push({

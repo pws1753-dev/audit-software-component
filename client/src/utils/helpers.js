@@ -134,3 +134,40 @@ export function showToast(msg, ms = 3000) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
+
+
+// ── UPLOAD PREP ──────────────────────────────────────
+// The API runs as a serverless function with a ~4.5 MB request-body cap, and base64 inflates a file
+// by a third, so a normal phone photo (5-10 MB) would be rejected. Photos are downscaled in the
+// browser first; other file types must fit as-is.
+const MAX_UPLOAD_DATA_URL_CHARS = 4_000_000;
+
+function readAsDataUrl(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('Could not read the file')); r.readAsDataURL(file); });
+}
+function loadImage(src) {
+  return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('Could not read the image')); img.src = src; });
+}
+
+export async function prepareUploadDataUrl(file) {
+  const original = await readAsDataUrl(file);
+  if (original.length <= MAX_UPLOAD_DATA_URL_CHARS && !(/^image\/(jpeg|png|webp|heic|heif)/i.test(file.type) && file.size > 1_500_000)) return original;
+  if (/^image\/(jpeg|png|webp|heic|heif)/i.test(file.type)) {
+    try {
+      const img = await loadImage(original);
+      for (const [maxSide, quality] of [[2000, 0.85], [1600, 0.8], [1280, 0.7], [1024, 0.6]]) {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const out = canvas.toDataURL('image/jpeg', quality);
+        if (out.length <= MAX_UPLOAD_DATA_URL_CHARS) return out;
+      }
+    } catch (_err) { /* fall through to the size check below */ }
+  }
+  if (original.length > MAX_UPLOAD_DATA_URL_CHARS) throw new Error(`${file.name} is too large to upload (max about 3 MB for non-photo files)`);
+  return original;
+}
