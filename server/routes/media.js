@@ -52,10 +52,13 @@ router.post('/upload-base64', wrapAsync(async (req, res) => {
   const folder = String((req.body && req.body.folder) || 'auditpro').replace(/[^a-zA-Z0-9_/-]/g, '_').slice(0, 100);
   const filename = String((req.body && req.body.filename) || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
   const timestamp = Math.floor(Date.now() / 1000);
-  const params = { folder, timestamp, use_filename: true };
+  // Cloudinary signs every parameter sent (except file/api_key/resource_type), so sign exactly
+  // what is posted. The folder lives inside public_id; sending a separate `folder` as well would
+  // nest the asset twice (auditpro/auditpro/...).
+  const params = { public_id: `${folder}/${filename}_${timestamp}`, timestamp };
   const signature = cloudinarySignature(params, cfg.apiSecret);
   const endpoint = getCloudinaryEndpoint(cfg, 'auto', 'upload');
-  const response = await cloudinaryPostMultipart(endpoint, { file: dataUrl, ...params, public_id: `${folder}/${filename}_${timestamp}`, api_key: cfg.apiKey, signature });
+  const response = await cloudinaryPostMultipart(endpoint, { file: dataUrl, ...params, api_key: cfg.apiKey, signature });
   const data = response.data || {};
   if (!response.ok || data.error) return res.status(response.status || 502).json({ ok: false, error: (data.error && data.error.message) || 'Upload failed' });
   const item = { id: data.public_id, url: data.secure_url, thumbUrl: data.secure_url, name: filename, format: data.format, size: data.bytes, resourceType: data.resource_type, mediaType: mediaTypeFromUpload(data), addedAt: new Date().toISOString(), addedBy: actorOf(req) };
