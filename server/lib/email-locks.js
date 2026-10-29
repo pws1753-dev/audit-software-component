@@ -19,14 +19,17 @@ function normalizeFrequencyDays(value) {
 // on the next run instead of being locked out for the whole frequency window. Returns false when a previous send is still
 // inside its frequency window, or when another worker is mid-send. The lock doc shares the
 // `appdata` collection and its unique `key` index: when the doc exists but is not yet due, the
-// filter misses and the upsert collides on that index (E11000), which is the "not granted" signal.
+// filter misses and the insert collides on that index (E11000), which is the "not granted" signal.
 async function claimEmailLock(collection, lockKey, frequencyDays, meta, by) {
   const now = new Date();
   const key = emailSendLockKey(lockKey);
   const frequency = normalizeFrequencyDays(frequencyDays);
   const pendingUntil = new Date(now.getTime() + EMAIL_LOCK_PENDING_MS);
+  const fields = { key, lockKey, frequencyDays: frequency, pendingUntil, claimedAt: now, claimedBy: String(by || 'engine').slice(0, 80), meta: meta && typeof meta === 'object' ? meta : {} };
   try {
-    const doc = await collection.findOneAndUpdate(
+    // Step 1: re-claim an existing lock that is due or orphaned. $expr is not allowed in an
+    // upsert filter, so this is a plain (non-upsert) update.
+    const reclaimed = await collection.findOneAndUpdate(
       {
         key,
         $and: [
@@ -41,13 +44,14 @@ async function claimEmailLock(collection, lockKey, frequencyDays, meta, by) {
           { $or: [{ pendingUntil: { $exists: false } }, { pendingUntil: { $lte: now } }] },
         ],
       },
-      {
-        $set: { key, lockKey, frequencyDays: frequency, pendingUntil, claimedAt: now, claimedBy: String(by || 'engine').slice(0, 80), meta: meta && typeof meta === 'object' ? meta : {} },
-        $setOnInsert: { createdAt: now },
-      },
-      { upsert: true, returnDocument: 'after' }
+      { $set: fields },
+      { returnDocument: 'after' }
     );
-    return Boolean(doc);
+    if (reclaimed) return true;
+    // Step 2: no such lock yet -> create it. If the doc exists but is not yet due (or another
+    // worker is mid-send), the unique `key` index rejects the insert (E11000): "not granted".
+    await collection.insertOne({ ...fields, createdAt: now });
+    return true;
   } catch (err) {
     if (err && err.code === 11000) return false;
     throw err;
