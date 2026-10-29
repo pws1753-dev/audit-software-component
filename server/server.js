@@ -62,7 +62,7 @@ app.get('/api/health', wrapAsync(async (_req, res) => {
 }));
 
 app.get('/api/version', (_req, res) => {
-  res.json({ ok: true, version: APP_VERSION, syncClient: REQUIRED_SYNC_CLIENT });
+  res.json({ ok: true, version: APP_VERSION, syncClient: REQUIRED_SYNC_CLIENT, commit: String(process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null });
 });
 
 // ── ROUTES ──────────────────────────────────────────
