@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon } from './UI';
 import { showToast, genId } from '../utils/helpers';
-import { clauseDescription } from '../utils/dashboardHelpers';
 import { apiFetch } from '../utils/api';
 
 function deptCodeFromName(name, depts) {
@@ -21,9 +20,6 @@ function splitEmailList(value) {
   return String(value || '').split(/\|\||[;,]/).map(x => x.trim()).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
 }
 function joinEmailList(value) { return splitEmailList(value).join(', '); }
-function replaceTemplate(str, vars) {
-  return String(str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] !== undefined ? vars[k] : ''));
-}
 
 // Email Master, Email Templates and Email Logs — used inside the Email Center.
 // `tab` is one of 'emailmaster' | 'emailtemplates' | 'emaillogs'.
@@ -37,6 +33,7 @@ export default function EmailDataTabs({ tab }) {
   const [testEmail, setTestEmail] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [checkingSmtp, setCheckingSmtp] = useState(false);
+  const [previewMail, setPreviewMail] = useState(null);
   const depts = getDepts();
   const emailMaster = getEmailMaster();
   const templates = getEmailTemplates();
@@ -53,7 +50,7 @@ export default function EmailDataTabs({ tab }) {
   const activeTpl = templates.find(t => t.id === tplId) || templates[0] || null;
   useEffect(() => {
     if (activeTpl && (!tplDraft || tplDraft.id !== activeTpl.id)) {
-      setTplDraft({ id: activeTpl.id, name: activeTpl.name || '', subject: activeTpl.subject || '', body: activeTpl.body || '', active: activeTpl.active !== false });
+      setTplDraft({ id: activeTpl.id, type: activeTpl.type || String(activeTpl.id || '').replace(/^tpl_/, ''), name: activeTpl.name || '', subject: activeTpl.subject || '', body: activeTpl.body || '', active: activeTpl.active !== false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTpl?.id]);
@@ -184,22 +181,30 @@ export default function EmailDataTabs({ tab }) {
     if (!testEmail.trim()) { showToast('Enter a recipient email'); return; }
     if (!tplDraft) return;
     setSendingTest(true);
-    const sampleRows = [{ ref: 'NC-001', auditRef: 'AUD-001', clause: 'AS9100D §8.5.2', due: new Date().toISOString().slice(0, 10), status: 'open', sev: 'major' }];
-    const vars = {
-      department_name: 'Sample Department', spoc_name: 'Sample SPOC', audit_name: 'Sample Audit',
-      nc_count: sampleRows.length, nc_number: sampleRows[0].ref, target_date: sampleRows[0].due, delay_days: 3,
-      clause_name: sampleRows[0].clause, clause_description: clauseDescription(sampleRows[0].clause), window_days: 2, escalation_level: '1',
-    };
-    const subject = replaceTemplate(tplDraft.subject, vars);
-    const html = replaceTemplate(tplDraft.body, vars);
     try {
-      await apiFetch('/api/email', { method: 'POST', body: JSON.stringify({ to: [testEmail.trim()], subject, html, text: html.replace(/<[^>]+>/g, ' ') }) });
-      await apiFetch('/api/email/log', { method: 'POST', body: JSON.stringify({ log: { type: 'test', to: testEmail.trim(), cc: '', subject, status: 'sent', sentAt: new Date().toISOString() } }) });
+      await apiFetch('/api/email/template-test', { method: 'POST', body: JSON.stringify({ to: testEmail.trim(), type: tplDraft.type, subject: tplDraft.subject, body: tplDraft.body }) });
       showToast('Test email sent to ' + testEmail.trim());
     } catch (err) {
       showToast('Send failed: ' + err.message);
     }
     setSendingTest(false);
+  };
+  const previewTemplate = async () => {
+    if (!tplDraft) return;
+    try {
+      const r = await apiFetch('/api/email/template-preview', { method: 'POST', body: JSON.stringify({ type: tplDraft.type, subject: tplDraft.subject, body: tplDraft.body }) });
+      setPreviewMail(r);
+    } catch (err) { showToast('Preview failed: ' + err.message); }
+  };
+  const restoreDefaultTemplate = async () => {
+    if (!tplDraft) return;
+    try {
+      const r = await apiFetch('/api/email/template-defaults');
+      const def = (r.templates || []).find(t => t.type === tplDraft.type);
+      if (!def) { showToast('No built-in default for this template'); return; }
+      setTplDraft(p => ({ ...p, subject: def.subject, body: def.body }));
+      showToast('Default wording loaded. Click Save Template to keep it.');
+    } catch (err) { showToast('Could not load the default: ' + err.message); }
   };
 
   // ── Email Logs ──
@@ -316,14 +321,18 @@ export default function EmailDataTabs({ tab }) {
               <div className="space-y-2">
                 <div><label className="form-label">Template Name</label><input value={tplDraft.name} onChange={e => setTplDraft(p => ({ ...p, name: e.target.value }))} /></div>
                 <div><label className="form-label">Subject</label><input value={tplDraft.subject} onChange={e => setTplDraft(p => ({ ...p, subject: e.target.value }))} /></div>
-                <div><label className="form-label">Body HTML</label><textarea style={{ height: 160, resize: 'vertical' }} value={tplDraft.body} onChange={e => setTplDraft(p => ({ ...p, body: e.target.value }))} /></div>
+                <div><label className="form-label">Body (HTML). The branded header, footer and plain-text copy are added automatically.</label><textarea style={{ height: 220, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 }} value={tplDraft.body} onChange={e => setTplDraft(p => ({ ...p, body: e.target.value }))} /></div>
                 <label className="flex items-center gap-2 text-xs" style={{ cursor: 'pointer' }}>
                   <input type="checkbox" style={{ width: 'auto' }} checked={tplDraft.active} onChange={e => setTplDraft(p => ({ ...p, active: e.target.checked }))} /> Active
                 </label>
-                <div className="text-[10px]" style={{ color: 'var(--text3)' }}>Variables: {'{{department_name}}, {{audit_name}}, {{nc_number}}, {{target_date}}, {{delay_days}}, {{spoc_name}}, {{clause_name}}, {{clause_description}}, {{window_days}}, {{escalation_level}}'}</div>
+                <div className="text-[10px]" style={{ color: 'var(--text3)' }}>Variables: {'{{department_name}}, {{spoc_name}}, {{recipient_name}}, {{nc_count}}, {{nc_table}}, {{summary}}, {{button}}, {{audit_name}}, {{submitted_at}}, {{nc_number}}, {{target_date}}, {{delay_days}}, {{clause_name}}, {{window_days}}, {{escalation_level}}, {{escalation_label}}'}</div>
                 {canEdit && (
                   <>
-                    <button className="btn btn-brand w-full" onClick={saveEmailTemplate}>Save Template</button>
+                    <div className="flex gap-2">
+                      <button className="btn btn-brand flex-1" onClick={saveEmailTemplate}>Save Template</button>
+                      <button className="btn btn-ghost" onClick={previewTemplate}><Icon name="eye" /> Preview</button>
+                      <button className="btn btn-ghost" onClick={restoreDefaultTemplate} title="Load the built-in professional wording into the editor">Restore default</button>
+                    </div>
                     <div className="flex gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                       <input placeholder="Send test to email..." value={testEmail} onChange={e => setTestEmail(e.target.value)} />
                       <button className="btn btn-ghost btn-sm" onClick={sendTestTemplate} disabled={sendingTest}>{sendingTest ? 'Sending…' : 'Send Test'}</button>
@@ -359,6 +368,15 @@ export default function EmailDataTabs({ tab }) {
             </table>
           </div>
         </Card>
+      )}
+      {previewMail && (
+        <div className="modal-bg" onClick={() => setPreviewMail(null)}>
+          <div className="modal-box" style={{ maxWidth: 760, width: '95vw' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><span>Email Preview</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setPreviewMail(null)}><Icon name="x" /></button></div>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text3)' }}>Subject: <strong style={{ color: 'var(--text)' }}>{previewMail.subject}</strong> (sample data)</div>
+            <iframe title="Email preview" sandbox="" srcDoc={previewMail.html} style={{ width: '100%', height: '65vh', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }} />
+          </div>
+        </div>
       )}
     </>
   );

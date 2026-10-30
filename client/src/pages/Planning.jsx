@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { apiFetch } from '../utils/api';
+import { notifyAuditSubmitted } from '../utils/auditMail';
 import { Card, Badge, Icon, ConfirmModal } from '../components/UI';
 import { fmtDate, showToast, today, genId, SEV_BADGE } from '../utils/helpers';
 import { buildChecklist, EMPTY_SESSION, STD_META } from '../utils/auditEngine';
@@ -327,11 +327,8 @@ export default function Planning() {
         ap_completed_audits: [...completed, newAudit],
       }, currentUser?.loginId);
 
-      // The department SPOC gets the "Audit Report Submitted" email. Best-effort: the audit is already
-      // saved, and the server sends it at most once per audit, so a failure here only needs a resend.
-      apiFetch('/api/email/audit-submission', { method: 'POST', body: JSON.stringify({ auditIds: [newAudit.id] }) })
-        .then(r => { if (r && r.sent) showToast(`Audit report email sent to ${name}`); })
-        .catch(() => showToast('Audit saved, but the audit report email could not be sent'));
+      // The department SPOC gets the "Audit Report Submitted" email (sent once per audit by the server).
+      notifyAuditSubmitted(newAudit.id, name, [0, 4000]);
 
       addNotification(
         'audit',

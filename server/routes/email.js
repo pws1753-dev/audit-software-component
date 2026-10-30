@@ -7,7 +7,8 @@ const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
 const { wrapAsync, requireAdmin, requireRoles, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
 const { emailSendLockKey, claimEmailLock } = require('../lib/email-locks');
-const { runEmailAutomation, sendAuditSubmissionEmails } = require('../lib/email-engine');
+const { runEmailAutomation, sendAuditSubmissionEmails, sendNcReminder } = require('../lib/email-engine');
+const { DEFAULT_TEMPLATES, TYPE_STYLE, renderEmail, sampleVars } = require('../lib/email-render');
 
 function normalizeEmailLockItems(input) {
   return (Array.isArray(input) ? input : []).map(item => {
@@ -58,6 +59,49 @@ router.post('/audit-submission', wrapAsync(async (req, res) => {
   const auditIds = (Array.isArray(req.body && req.body.auditIds) ? req.body.auditIds : []).map(String).slice(0, 30);
   const dryRun = Boolean(req.body && req.body.dryRun);
   res.json(await sendAuditSubmissionEmails({ auditIds, dryRun, by: actorOf(req) }));
+}));
+
+
+// GET /api/email/template-defaults : the built-in professional wording, used by the editor's "Restore default".
+router.get('/template-defaults', wrapAsync(async (req, res) => {
+  requireAdmin(req);
+  res.json({ ok: true, templates: DEFAULT_TEMPLATES });
+}));
+
+function renderSample(body) {
+  const type = TYPE_STYLE[String((body && body.type) || '')] ? String(body.type) : 'test';
+  const tpl = { subject: String((body && body.subject) || ''), body: String((body && body.body) || '') };
+  if (!tpl.subject.trim() || !tpl.body.trim()) { const err = new Error('Subject and body are required'); err.statusCode = 400; throw err; }
+  return { type, ...renderEmail(tpl, type, sampleVars(type)) };
+}
+
+// POST /api/email/template-preview : renders a template (as typed in the editor) exactly as it would be sent.
+router.post('/template-preview', wrapAsync(async (req, res) => {
+  requireAdmin(req);
+  const { subject, html } = renderSample(req.body);
+  res.json({ ok: true, subject, html });
+}));
+
+// POST /api/email/template-test : sends that rendered sample to one address.
+router.post('/template-test', wrapAsync(async (req, res) => {
+  requireAdmin(req);
+  const to = parseRecipients(req.body && req.body.to);
+  if (to.length !== 1 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to[0])) return res.status(400).json({ ok: false, error: 'Enter one valid recipient email' });
+  const { subject, html, text } = renderSample(req.body);
+  await getMailer().sendMail({ from: SMTP_FROM, to, subject: `[TEST] ${subject}`, html, text });
+  const collection = await getCollection();
+  const current = await collection.findOne({ key: 'ap_email_logs' });
+  const log = { id: `test_${Date.now()}`, type: 'test', to: to[0], cc: '', subject: `[TEST] ${subject}`, status: 'sent', sentAt: new Date().toISOString() };
+  const value = mergeEmailLogs(current && current.value, [log], current && current.clearedAt);
+  await collection.updateOne({ key: 'ap_email_logs' }, { $set: { key: 'ap_email_logs', value, updatedAt: new Date(), updatedBy: actorOf(req), clearedAt: (current && current.clearedAt) || null } }, { upsert: true });
+  res.json({ ok: true });
+}));
+
+// POST /api/email/nc-reminder : the CAPA "Remind" button. One reminder per NC per day.
+router.post('/nc-reminder', wrapAsync(async (req, res) => {
+  requireRoles(req, ['admin', 'auditor', 'manager'], 'Only Master Admin, Auditor or Manager can send reminders');
+  const result = await sendNcReminder({ findingId: req.body && req.body.findingId, by: actorOf(req) });
+  res.status(result.ok ? 200 : (result.throttled ? 429 : 400)).json(result);
 }));
 
 // POST /api/email/run

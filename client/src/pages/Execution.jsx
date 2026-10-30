@@ -1,3 +1,4 @@
+import { notifyAuditSubmitted } from '../utils/auditMail';
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon, EvidenceUploader } from '../components/UI';
@@ -235,6 +236,7 @@ export default function Execution() {
     const completedAudit = { ...audit, status: 'submitted', submittedAt, session: sessionCopy, findingRefs: newFindings.map(f => f.ref), auditScoreFrozen, auditFindingCountsFrozen };
     if (newFindings.length) writeSyncKey('ap_finds', [...existing, ...newFindings], currentUser?.loginId);
     writeSyncKey('ap_completed_audits', [...getCompletedAudits(), completedAudit], currentUser?.loginId);
+    notifyAuditSubmitted(completedAudit.id, audit.deptName, [4000, 12000, 25000]);
     setActive(null); setSession(EMPTY_SESSION); setCurSec(0);
     showToast(`Audit submitted! ${newFindings.length} finding(s) saved to Findings Register.`);
     navigate('reports');

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon, EvidenceUploader } from '../components/UI';
+import { apiFetch } from '../utils/api';
 import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today, sanitize, findingWorkflowStatus, mediaUrl, isImageMedia } from '../utils/helpers';
 import { managerDeptCodes, filterFindingsByDateRange, findingMatchesDeptCode, deptCodeInList, deptValuesMatch } from '../utils/dashboardHelpers';
 
@@ -40,6 +41,8 @@ export default function CAPA({ dateFrom, dateTo }) {
   const [reviewDate, setReviewDate] = useState(today());
 
   // permissions
+  const canRemind = role === 'admin' || role === 'auditor' || role === 'manager';
+  const [reminding, setReminding] = useState('');
   const canEditStatus = role === 'admin' || role === 'auditor' || role === 'spoc';
   const canSubmitClosure = role === 'spoc' || role === 'admin';
   const canReview = role === 'auditor' || role === 'admin';
@@ -118,6 +121,15 @@ export default function CAPA({ dateFrom, dateTo }) {
     // normalizer can read the old 'reject' as the latest verdict and reopen the finding.
     commit(x => ({ ...x, status: 'pending-closure', capaStatus: 'submitted', closureEvidence: closureEv.trim(), closureFiles, closureSubmittedBy: currentUser?.name || currentUser?.loginId, closureDate: today(), decision: null, decisionComments: '', decisionDate: null, auditClosureDate: null, closedAt: null, closureSubmittedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), activityLog: [...(x.activityLog || []), { user: currentUser?.name || 'System', action: 'Closure submitted for review', ts: nowStamp() }] }), 'Closure submitted for review');
     setClosureModal(null); setClosureEv(''); setClosureFiles([]);
+  };
+
+  const sendReminder = async (f) => {
+    setReminding(f.id || f.ref);
+    try {
+      const r = await apiFetch('/api/email/nc-reminder', { method: 'POST', body: JSON.stringify({ findingId: f.id || f.ref }) });
+      showToast(`Reminder for ${f.ref} sent to ${(r.to || []).join(', ')}`, 4500);
+    } catch (err) { showToast(err.message || 'Reminder could not be sent', 4500); }
+    setReminding('');
   };
 
   const submitReview = (verdict) => {
@@ -230,7 +242,7 @@ export default function CAPA({ dateFrom, dateTo }) {
           {canReview && ws === 'pending-closure' && <button className="btn btn-primary btn-sm" onClick={() => { setReviewModal(f); setDecisionComments(''); setReviewDate(today()); }}>Review Closure</button>}
           {role === 'admin' && ws !== 'closed' && ws !== 'pending-closure' && <button className="btn btn-amber btn-sm" onClick={() => applyStatus(f, 'closed')}>Force Close</button>}
           {ws === 'closed' && <Badge type="b-green">Verified &amp; Closed</Badge>}
-          <button className="btn btn-ghost btn-sm" onClick={() => showToast('Reminder email dispatch is handled by the server email service')}><Icon name="mail" /> Remind</button>
+          {canRemind && ws !== 'closed' && ws !== 'pending-closure' && <button className="btn btn-ghost btn-sm" disabled={reminding === (f.id || f.ref)} onClick={() => sendReminder(f)}><Icon name="mail" /> {reminding === (f.id || f.ref) ? 'Sending…' : 'Remind'}</button>}
         </div>
       </>
     );
