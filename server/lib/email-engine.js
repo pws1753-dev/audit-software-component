@@ -8,11 +8,11 @@
 //
 // Escalation policy mirrors the matrix the CAPA page already advertises to users:
 //   due/overdue 0-6d Delayed NC -> SPOC              on delay days 0, 3 and 6
-//   overdue 7-14d  Escalation   -> HOD (SPOC in CC)  every 2 days
-//   overdue 15d+   Escalation   -> HOD + Management  every 30 days
+//   overdue 7d+    Escalation   -> HOD (SPOC in CC)  every 2 days, until the NC is closed
+//   overdue 15d+   Escalation   -> Management        every 30 days (in addition to the HOD mails)
 //   due within 0-2d Upcoming    -> SPOC              once per target date
 //
-// The engine never mutates findings; it only sends and logs.
+// Besides sending and logging, each run flips overdue NCs to 'delayed' (see below).
 
 const { getCollection } = require('./mongo');
 const { getMailer, SMTP_FROM } = require('./mailer');
