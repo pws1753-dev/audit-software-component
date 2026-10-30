@@ -4,10 +4,10 @@ const express = require('express');
 const router = express.Router();
 const { getCollection } = require('../lib/mongo');
 const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
-const { wrapAsync, requireAdmin, requirePageAccess, actorOf } = require('../middleware/auth');
+const { wrapAsync, requireAdmin, requireRoles, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
 const { emailSendLockKey, claimEmailLock } = require('../lib/email-locks');
-const { runEmailAutomation } = require('../lib/email-engine');
+const { runEmailAutomation, sendAuditSubmissionEmails } = require('../lib/email-engine');
 
 function normalizeEmailLockItems(input) {
   return (Array.isArray(input) ? input : []).map(item => {
@@ -47,6 +47,17 @@ router.post('/', wrapAsync(async (req, res) => {
   const transport = getMailer();
   const info = await transport.sendMail({ from: SMTP_FROM, to, cc, bcc, subject, text, html, attachments });
   res.json({ ok: true, messageId: info.messageId, accepted: info.accepted });
+}));
+
+
+// POST /api/email/audit-submission
+// Sends the "Audit Report Submitted" email for the given audit ids (once per audit; repeat calls are
+// harmless). Called by the portal right after an audit is created, and usable by an admin as a resend.
+router.post('/audit-submission', wrapAsync(async (req, res) => {
+  requireRoles(req, ['admin', 'auditor'], 'Only Master Admin or Auditor can send audit report emails');
+  const auditIds = (Array.isArray(req.body && req.body.auditIds) ? req.body.auditIds : []).map(String).slice(0, 30);
+  const dryRun = Boolean(req.body && req.body.dryRun);
+  res.json(await sendAuditSubmissionEmails({ auditIds, dryRun, by: actorOf(req) }));
 }));
 
 // POST /api/email/run

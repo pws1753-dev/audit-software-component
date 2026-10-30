@@ -473,4 +473,121 @@ async function runEmailAutomation(options = {}) {
   return summary;
 }
 
-module.exports = { runEmailAutomation, workflowStatus, classify, classifyAll, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
+
+// ── AUDIT SUBMISSION EMAIL ───────────────────────────
+// "Audit Report Submitted" goes to the department SPOC (Manager / HOD / auditor / admins in CC) once
+// per audit, using the editable `audit_submission` template. It is idempotent: a send record per
+// audit means a repeat call (or a double click) cannot email the department twice.
+async function sendAuditSubmissionEmails(options = {}) {
+  const by = String(options.by || 'audit-submission');
+  const dryRun = Boolean(options.dryRun);
+  const tz = options.tz || DEFAULT_TZ;
+  const wanted = new Set((Array.isArray(options.auditIds) ? options.auditIds : []).map(String).filter(Boolean));
+  const empty = { ok: true, sent: 0, failed: 0, skipped: 0, missing: [], results: [] };
+  if (!wanted.size) return empty;
+
+  const collection = await getCollection();
+  const data = await readKeys(collection);
+  const settings = data.ap_system_settings && typeof data.ap_system_settings === 'object' ? data.ap_system_settings : {};
+  const rules = mergeRules(data.ap_email_rules);
+  if (settings.emailNotifications === false) return { ...empty, skippedReason: 'emailNotifications is off in System Settings' };
+  if (rules.enabled === false) return { ...empty, skippedReason: 'Automatic emails are paused in the Email Center' };
+
+  const findings = (Array.isArray(data.ap_finds) ? data.ap_finds : []).filter(f => f && !f.deletedAt && String(f.status || '').toLowerCase() !== 'draft');
+  const emailMaster = Array.isArray(data.ap_email_master) ? data.ap_email_master : [];
+  const templates = Array.isArray(data.ap_email_templates) ? data.ap_email_templates : [];
+  const depts = Array.isArray(data.ap_depts) ? data.ap_depts : [];
+  const users = Array.isArray(data.ap_users) ? data.ap_users.filter(u => u && u.active !== false && u.email) : [];
+  const auditors = Array.isArray(data.ap_auds) ? data.ap_auds : [];
+  const globalCc = dedupe(splitEmails((Array.isArray(data.ap_required_cc_emails) ? data.ap_required_cc_emails : []).join(',')));
+  const suppressed = new Set(splitEmails((rules.suppressed || []).join(',')).map(e => e.toLowerCase()));
+  const stripSuppressed = list => list.filter(e => !suppressed.has(e.toLowerCase()));
+  const audits = (Array.isArray(data.ap_completed_audits) ? data.ap_completed_audits : [])
+    .filter(a => a && !a.deletedAt && (wanted.has(String(a.id)) || wanted.has(String(a.ref || a.auditRef))));
+
+  const results = [];
+  const logs = [];
+  let sent = 0, failed = 0, skipped = 0;
+  const note = (r, log) => { results.push(r); if (log) logs.push(log); };
+
+  for (const audit of audits) {
+    const ref = String(audit.ref || audit.auditRef || audit.id);
+    try {
+      const deptRecord = depts.find(d => deptMatches(depts, d.code, audit.dept) || deptMatches(depts, d.name, audit.deptName || audit.dept));
+      const deptCode = String((deptRecord && deptRecord.code) || audit.dept || '').trim();
+      const matching = emailMaster.filter(m => deptMatches(depts, m.deptCode, deptCode) || deptMatches(depts, m.department, deptCode));
+      const master = matching.find(m => String(m.status || 'active').toLowerCase() !== 'inactive') || null;
+      const deptName = (matching[0] && matching[0].department) || (deptRecord && deptRecord.name) || audit.deptName || deptCode;
+      const deptRule = rules.depts[deptCode] || {};
+      const base = { audit: ref, dept: deptCode, deptName };
+
+      const refs = new Set((audit.findingRefs || []).map(String));
+      const rows = findings.filter(f => String(f.auditRef || f.auditId || '') === ref || refs.has(String(f.ref || '')))
+        .filter(f => deptMatches(depts, f.dept || f.deptName, deptCode));
+
+      if (deptRule.enabled === false) { skipped++; note({ ...base, status: 'skipped', reason: `${deptCode} is switched off in the Email Center` }); continue; }
+      if (matching.length && !master) { skipped++; note({ ...base, status: 'skipped', reason: `email record for ${deptCode} is deactivated` }); continue; }
+      const tpl = templateFor(templates, 'audit_submission');
+      if (!tpl) { skipped++; note({ ...base, status: 'skipped', reason: 'no active "audit_submission" template' }); continue; }
+
+      const deptUsers = users.filter(u => deptMatches(depts, u.dept, deptCode));
+      const auditorEmails = dedupe([
+        ...auditors.filter(a => a && a.email && audit.auditor && a.name === audit.auditor).flatMap(a => splitEmails(a.email)),
+        ...users.filter(u => u.role === 'auditor' && (!audit.auditor || u.name === audit.auditor || u.loginId === audit.auditor)).flatMap(u => splitEmails(u.email)),
+      ]);
+      const requiredCc = dedupe([...auditorEmails, ...users.filter(u => u.role === 'admin').flatMap(u => splitEmails(u.email))]);
+      const resolvedMaster = {
+        ...(master || {}),
+        email: dedupe([...splitEmails(master && master.email), ...deptUsers.filter(u => u.role === 'spoc').flatMap(u => splitEmails(u.email))]).join(', '),
+        reportingEmail: dedupe([...splitEmails(master && master.reportingEmail), ...deptUsers.filter(u => u.role === 'manager').flatMap(u => splitEmails(u.email))]).join(', '),
+        managementEmail: dedupe([...splitEmails(master && master.managementEmail), ...users.filter(u => u.role === 'admin' || u.role === 'viewer').flatMap(u => splitEmails(u.email))]).join(', '),
+      };
+      const resolved = recipientsFor('audit_submission', resolvedMaster, globalCc, rules, deptRule, requiredCc);
+      const to = stripSuppressed(resolved.to);
+      const ownerCc = dedupe(rows.flatMap(r => splitEmails(r.ownerEmail)));
+      const cc = stripSuppressed(withoutAll(dedupe([...resolved.cc, ...ownerCc]), resolved.to));
+      if (!to.length) {
+        skipped++;
+        const reason = `no usable email address for dept ${deptCode}`;
+        note({ ...base, status: 'skipped', reason }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: '', cc: '', subject: `[not sent] Audit Report Submitted - ${deptName}`, status: 'skipped', error: reason, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+        continue;
+      }
+
+      const submitted = new Date(audit.submittedAt || audit.date || Date.now());
+      const vars = {
+        department_name: deptName,
+        spoc_name: (master && master.spocName) || deptName,
+        audit_name: audit.title || ref,
+        nc_count: rows.length,
+        submitted_at: new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(isNaN(submitted) ? new Date() : submitted),
+        nc_table: rows.length ? buildNcTable(rows.map(f => ({ f, hit: { overdue: 0 } }))) : '',
+      };
+      const subject = replaceTemplate(tpl.subject, vars);
+      const html = replaceTemplate(tpl.body, vars);
+      if (dryRun) { note({ ...base, status: 'dry-run', ncCount: rows.length, to, cc, subject }); continue; }
+
+      const lockKey = `audit_submission:${ref}:${deptCode}`;
+      if (!(await claimEmailLock(collection, lockKey, 365, { bucket: 'audit_submission', deptCode, refs: [ref] }, by))) {
+        skipped++; note({ ...base, status: 'throttled', reason: 'the audit report mail was already sent for this audit' }); continue;
+      }
+      try {
+        await getMailer().sendMail({ from: SMTP_FROM, to, cc, subject, html, text: html.replace(/<[^>]+>/g, ' ') });
+        await commitEmailLock(collection, lockKey, 365, true, by);
+        sent++;
+        note({ ...base, status: 'sent', ncCount: rows.length, to, cc, subject }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject, status: 'sent', dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+      } catch (err) {
+        await commitEmailLock(collection, lockKey, 365, false, by);
+        failed++;
+        note({ ...base, status: 'failed', error: err.message }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+      }
+    } catch (err) {
+      failed++;
+      note({ audit: ref, status: 'failed', error: err.message });
+    }
+  }
+  const missing = [...wanted].filter(id => !audits.some(a => String(a.id) === id || String(a.ref || a.auditRef) === id));
+  if (!dryRun) await appendEmailLogs(collection, logs, `email-engine:${by}`);
+  return { ok: true, sent, failed, skipped, missing, results };
+}
+
+module.exports = { sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, classify, classifyAll, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
