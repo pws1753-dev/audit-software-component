@@ -329,7 +329,7 @@ export default function EmailCenter() {
             {[
               ['upcoming_reminder', 'Upcoming Reminder'],
               ['delayed', 'Delayed NC'],
-              ['escalation_2', 'Escalation → HOD (overdue 7-14d)'],
+              ['escalation_2', 'Escalation → HOD (overdue 7d+, until closed)'],
               ['escalation_3', 'Escalation → Management (overdue 15d+)'],
             ].map(([key, label]) => (
               <div key={key} className="flex items-center gap-2 py-1">
@@ -357,7 +357,7 @@ export default function EmailCenter() {
                 <span style={{ color: 'var(--text3)' }}>Grouping</span><strong>One email per department, per type</strong>
               </div>
               <div className="flex justify-between py-1">
-                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (7d) → Management (15d)</strong>
+                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (from 7d) → + Management (from 15d)</strong>
               </div>
               <p className="mt-3 text-[10px]" style={{ color: 'var(--text3)' }}>
                 The schedule itself is set by <code>EMAIL_CRON</code> on the server. Use <strong>Preview</strong> above to see

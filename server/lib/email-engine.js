@@ -163,8 +163,14 @@ function recipientsFor(bucket, master, globalCc, rules = EMAIL_RULES_DEFAULTS, d
   else if (bucket === 'escalation_2') to = dedupe([...hod]);
   else to = dedupe([...spoc]);
 
-  // Never drop an email on the floor because one field is blank: fall back down the chain.
-  if (!to.length) to = dedupe([...spoc, ...manager, ...hod, ...management]);
+  // Never drop an email on the floor because one field is blank: fall back to the *next* level
+  // that has an address. (Taking all levels at once would put management on every HOD reminder.)
+  if (!to.length) {
+    const chain = bucket === 'escalation_3' ? [management, hod, manager, spoc]
+      : bucket === 'escalation_2' ? [hod, manager, spoc, management]
+        : [spoc, manager, hod, management];
+    to = dedupe(chain.find(level => level.length) || []);
+  }
   if (!to.length) return { to: [], cc: [] };
 
   const cc = dedupe([
@@ -323,7 +329,7 @@ async function runEmailAutomation(options = {}) {
   const logs = [];
   let sent = 0, failed = 0, skipped = 0;
 
-  for (const group of groups.values()) {
+  const processGroup = async (group) => {
     const { bucket, deptCode, rows } = group;
     // One department's failure (lock store hiccup, bad data) must not abort the departments after it.
     try {
@@ -338,14 +344,14 @@ async function runEmailAutomation(options = {}) {
     if (matchingMasterRecords.length && !master) {
       skipped++;
       results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'skipped', reason: `email record for ${deptCode} is deactivated` });
-      continue;
+      return;
     }
 
     const tpl = templateFor(templates, bucket);
     if (!tpl) {
       skipped++;
       results.push({ bucket, dept: deptCode, ncCount: rows.length, status: 'skipped', reason: `no active template for "${bucket}"` });
-      continue;
+      return;
     }
 
     const deptRule = rules.depts[deptCode] || {};
@@ -380,23 +386,26 @@ async function runEmailAutomation(options = {}) {
           : `no usable email addresses for dept ${deptCode}`;
       results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'skipped', reason });
       logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptName} — ${rows.length} NC(s)`, status: 'skipped', error: reason, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
-      continue;
+      return;
     }
 
     const frequencyDays = bucket === 'upcoming_reminder' ? 365 : (Number(rules.frequencies[bucket]) || 1);
     const lockRows = [];
     if (!dryRun) {
-      for (const row of rows) {
+      // Claims are independent per finding, so run them together: a department with 20 NCs
+      // would otherwise cost 20 sequential round trips, and the Vercel function has a 60s budget.
+      const claims = await Promise.all(rows.map(async row => {
         const findingKey = String(row.f.id || row.f.ref || '').trim();
         const dueKey = bucket === 'upcoming_reminder' ? `:${row.f.due || ''}` : '';
         const lockKey = `auto:${bucket}:${deptCode}:${findingKey}${dueKey}`;
         const granted = await claimEmailLock(collection, lockKey, frequencyDays, { bucket, deptCode, refs: [row.f.ref].filter(Boolean) }, by);
-        if (granted) lockRows.push({ row, lockKey });
-      }
+        return granted ? { row, lockKey } : null;
+      }));
+      claims.forEach(item => { if (item) lockRows.push(item); });
       if (!lockRows.length) {
         skipped++;
         results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'throttled', reason: `all findings were already sent within the last ${frequencyDays} day(s)` });
-        continue;
+        return;
       }
       sendRows = lockRows.map(item => item.row);
       refs = sendRows.map(r => r.f.ref).filter(Boolean).sort();
@@ -421,7 +430,7 @@ async function runEmailAutomation(options = {}) {
     const html = replaceTemplate(tpl.body, vars);
     if (dryRun) {
       results.push({ bucket, dept: deptCode, deptName, ncCount: sendRows.length, status: 'dry-run', to, cc, subject, html, refs, frequencyDays });
-      continue;
+      return;
     }
 
     try {
@@ -443,7 +452,13 @@ async function runEmailAutomation(options = {}) {
       results.push({ bucket, dept: deptCode, ncCount: rows.length, status: 'failed', error: err.message });
       logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptCode} — ${rows.length} NC(s)`, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
     }
-  }
+  };
+  // A few departments at a time: sequential SMTP + lock round trips for 20+ groups can outlast the
+  // serverless time limit, and one slow mail should not hold up the rest.
+  const queue = Array.from(groups.values());
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (queue.length) await processGroup(queue.shift());
+  }));
 
   if (!dryRun) await appendEmailLogs(collection, logs, `email-engine:${by}`);
 
