@@ -4,6 +4,7 @@ import { Card, Tabs, Badge, Icon, ConfirmModal, EmptyState, Spinner } from '../c
 import { showToast } from '../utils/helpers';
 import { EMAIL_TYPES, deptRuleOf, isDeptTypeEnabled, isValidEmail } from '../utils/emailRules';
 import { apiFetch } from '../utils/api';
+import EmailDataTabs from '../components/EmailDataTabs';
 
 const BUCKET_LABEL = {
   upcoming_reminder: 'Upcoming Reminder',
@@ -154,6 +155,9 @@ export default function EmailCenter() {
           { id: 'suppress', label: 'Never Email', count: rules.suppressed.length },
           { id: 'preview', label: 'Preview', count: preview ? preview.groups : null },
           { id: 'logs', label: 'Sent Log', count: autoLogs.length },
+          { id: 'emailmaster', label: 'Email Master', count: emailMaster.length },
+          { id: 'emailtemplates', label: 'Email Templates' },
+          { id: 'emaillogs', label: 'Email Logs', count: logs.length },
         ]}
       />
 
@@ -487,6 +491,8 @@ export default function EmailCenter() {
           )}
         </Card>
       )}
+
+      {(tab === 'emailmaster' || tab === 'emailtemplates' || tab === 'emaillogs') && <EmailDataTabs tab={tab} />}
 
       <ConfirmModal
         open={confirmSend}
