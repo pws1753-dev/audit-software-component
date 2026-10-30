@@ -160,6 +160,9 @@ export function isAdhocCompletedAudit(audit) {
   return Boolean(audit && (audit.adhocAudit || audit.auditType === 'adhoc' || audit.auditSource === 'adhoc'));
 }
 export function adhocScoreFromStats(audit) {
+  // A combined (several audits in one month) record carries its own averaged score; it only
+  // copies the last audit's fields, so its stats must not be re-read here.
+  if (audit && audit.combinedAuditScore) return null;
   if (!isAdhocCompletedAudit(audit) || !audit.stats) return null;
   const adequate = Number(audit.stats.adequate), notAdequate = Number(audit.stats.notAdequate);
   if (!Number.isFinite(adequate) || !Number.isFinite(notAdequate) || adequate + notAdequate <= 0) return null;
