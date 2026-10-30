@@ -32,7 +32,7 @@ const EMAIL_RULES_DEFAULTS = {
   ccHod: true,
   ccGlobal: true,
   types: { upcoming_reminder: true, delayed: true, escalation: true },
-  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 7 },
+  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 30 },
   suppressed: [],
   depts: {},
 };
@@ -92,7 +92,10 @@ function classifyAll(f, todayMs, windowDays) {
   const dueMs = ymdToMs(f.due);
   if (!Number.isFinite(dueMs)) return [];
   const overdue = Math.round((todayMs - dueMs) / DAY_MS);
-  if (overdue >= 15) return [{ type: 'escalation', level: 3, overdue }];
+  // An NC keeps nagging the department's HOD (level 2) for as long as it stays overdue; past 15
+  // days management is additionally told (level 3). Previously level 3 *replaced* level 2, so a
+  // department whose NCs were all 15+ days late went silent for a whole month between mails.
+  if (overdue >= 15) return [{ type: 'escalation', level: 3, overdue }, { type: 'escalation', level: 2, overdue }];
   if (overdue >= 7) return [{ type: 'escalation', level: 2, overdue }];
   const hits = [];
   if ([0, 3, 6].includes(overdue)) hits.push({ type: 'delayed', level: 1, overdue });
