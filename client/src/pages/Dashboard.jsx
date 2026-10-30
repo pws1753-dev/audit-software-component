@@ -97,8 +97,9 @@ export default function Dashboard({ dateFrom, dateTo }) {
       const score = scoreInfo && typeof scoreInfo.score === 'number' ? scoreInfo.score : null;
       const closed = df.filter(f => f.status === 'closed').length;
       const inprog = df.filter(f => {
+        // "Open" NCs have their own column; In Process is work that has actually started.
         const ws = String(f.status || '').toLowerCase();
-        return ws === 'in-progress' || ws === 'pending-closure' || ws === 'open';
+        return ws === 'in-progress' || ws === 'pending-closure';
       }).length;
       const delayed = df.filter(f => f.status !== 'closed' && (f.status === 'delayed' || delayDays(f) > 0)).length;
       return {

@@ -154,8 +154,22 @@ export function completedAuditsSorted(completed, findings, depts, deptCode) {
   });
 }
 
+// An adhoc audit is scored on its checkpoints: % of assessed rows that were Adequate. An import
+// listing only Not Adequate rows therefore scores 0%, not the severity-deduction score.
+export function isAdhocCompletedAudit(audit) {
+  return Boolean(audit && (audit.adhocAudit || audit.auditType === 'adhoc' || audit.auditSource === 'adhoc'));
+}
+export function adhocScoreFromStats(audit) {
+  if (!isAdhocCompletedAudit(audit) || !audit.stats) return null;
+  const adequate = Number(audit.stats.adequate), notAdequate = Number(audit.stats.notAdequate);
+  if (!Number.isFinite(adequate) || !Number.isFinite(notAdequate) || adequate + notAdequate <= 0) return null;
+  return Math.round((adequate / (adequate + notAdequate)) * 100);
+}
+
 export function frozenAuditScore(audit) {
   if (!audit) return null;
+  const adhoc = adhocScoreFromStats(audit);
+  if (adhoc !== null) return adhoc;
   const frozen = Number(audit.auditScoreFrozen);
   if (Number.isFinite(frozen)) return Math.max(0, Math.min(100, Math.round(frozen)));
   if (audit.auditFindingCountsFrozen) return scoreFromFindingCounts(audit.auditFindingCountsFrozen);

@@ -317,6 +317,14 @@ function sessionAuditFindingRows(session,audit) {
   const checkpointIds=new Set(((audit&&audit.sections)||[]).flatMap(s=>s&&Array.isArray(s._checkpoints)?s._checkpoints:[]).map(q=>String((q&&q.id)||'')).filter(Boolean));
   return Object.entries(findings).filter(([qid,f])=>isRealAuditFinding(f)&&(Object.prototype.hasOwnProperty.call(answers,qid)?answers[qid]==='no':(!checkpointIds.size||checkpointIds.has(String(qid))))).map(([,f])=>f);
 }
+// Adhoc audits are scored on their checkpoints (% Adequate), not on finding severities. Keep in step
+// with adhocScoreFromStats() in client/src/utils/dashboardHelpers.js.
+function adhocScoreFromStats(a) {
+  if(!a||!(a.adhocAudit||a.auditType==='adhoc'||a.auditSource==='adhoc')||!a.stats)return null;
+  const ad=Number(a.stats.adequate),na=Number(a.stats.notAdequate);
+  if(!Number.isFinite(ad)||!Number.isFinite(na)||ad+na<=0)return null;
+  return Math.round(ad/(ad+na)*100);
+}
 function auditScoreFromCounts(c) { return Math.min(100,Math.max(0,Math.round(100-(c.critical||0)*15-(c.major||0)*10-(c.minor||0)*5-(c.obs||0)*2))); }
 function completedAuditKey(a) {
   // ref alone is not unique: one external audit report is imported once per department.
@@ -348,7 +356,7 @@ function repairCompletedAuditScores(audits,findings) {
     const scoreRows=rows.length?rows:sessionAuditFindingRows(audit.session,audit);
     if(!scoreRows.length)return audit;
     const counts=auditFindingCounts(scoreRows);
-    return{...audit,findingRefs:rows.length?rows.map(f=>f.ref).filter(Boolean):(audit.findingRefs||[]),auditScoreFrozen:auditScoreFromCounts(counts),auditFindingCountsFrozen:counts,status:audit.status||'submitted'};
+    return{...audit,findingRefs:rows.length?rows.map(f=>f.ref).filter(Boolean):(audit.findingRefs||[]),auditScoreFrozen:(adhocScoreFromStats(audit)!==null?adhocScoreFromStats(audit):auditScoreFromCounts(counts)),auditFindingCountsFrozen:counts,status:audit.status||'submitted'};
   });
 }
 function mergeCompletedAuditsForSync(currentValue,incomingValue,findingsValue) {
