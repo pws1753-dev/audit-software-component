@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Card, Badge, Icon } from './UI';
+import { Card, Badge, Icon, ConfirmModal, EmptyState } from './UI';
 import { showToast, genId } from '../utils/helpers';
 import { apiFetch } from '../utils/api';
 
@@ -23,6 +23,23 @@ function joinEmailList(value) { return splitEmailList(value).join(', '); }
 
 // Email Master, Email Templates and Email Logs — used inside the Email Center.
 // `tab` is one of 'emailmaster' | 'emailtemplates' | 'emaillogs'.
+// ── Email Logs ──
+const LOG_TYPE = {
+  upcoming_reminder: ['Upcoming Reminder', 'b-blue', 'auto'],
+  delayed: ['Delayed NC', 'b-amber', 'auto'],
+  escalation_2: ['Escalation → HOD', 'b-red', 'auto'],
+  escalation_3: ['Escalation → Management', 'b-purple', 'auto'],
+  escalation: ['Escalation', 'b-red', 'auto'],
+  audit_submission: ['Audit Report', 'b-green', 'audit'],
+  capa_reminder: ['CAPA Reminder', 'b-amber', 'manual'],
+  manager_summary: ['Manager Summary', 'b-gray', 'manual'],
+  dept_report: ['Department Report', 'b-gray', 'manual'],
+  test: ['Test', 'b-gray', 'test'],
+};
+const LOG_STATUS = { sent: 'b-green', failed: 'b-red', skipped: 'b-amber', throttled: 'b-gray' };
+const LOG_FILTERS = [['all', 'All'], ['auto', 'Automatic reminders'], ['audit', 'Audit reports'], ['manual', 'Manual reminders'], ['test', 'Tests'], ['problem', 'Failed / skipped']];
+const LOG_PAGE = 50;
+
 export default function EmailDataTabs({ tab }) {
   const { getDepts, getEmailMaster, getEmailTemplates, getEmailLogs, getRequiredCcEmails, writeSyncKey, currentUser, setPageAction } = useApp();
   const [emEdit, setEmEdit] = useState(null);
@@ -34,6 +51,10 @@ export default function EmailDataTabs({ tab }) {
   const [sendingTest, setSendingTest] = useState(false);
   const [checkingSmtp, setCheckingSmtp] = useState(false);
   const [previewMail, setPreviewMail] = useState(null);
+  const [logFilter, setLogFilter] = useState('all');
+  const [logSearch, setLogSearch] = useState('');
+  const [logLimit, setLogLimit] = useState(LOG_PAGE);
+  const [confirmClear, setConfirmClear] = useState(false);
   const depts = getDepts();
   const emailMaster = getEmailMaster();
   const templates = getEmailTemplates();
@@ -210,8 +231,16 @@ export default function EmailDataTabs({ tab }) {
   // ── Email Logs ──
   const clearEmailLogs = () => {
     writeSyncKey('ap_email_logs', [], currentUser?.loginId);
+    setConfirmClear(false);
     showToast('Email logs cleared');
   };
+  const sortedLogs = emailLogs.slice().sort((a, b) => String(b.sentAt || '').localeCompare(String(a.sentAt || '')));
+  const filteredLogs = sortedLogs.filter(l => {
+    const kind = (LOG_TYPE[l.type] || [])[2] || 'manual';
+    if (logFilter === 'problem' ? (l.status === 'sent') : (logFilter !== 'all' && kind !== logFilter)) return false;
+    const q = logSearch.trim().toLowerCase();
+    return !q || [l.to, l.cc, l.subject, l.dept, l.type, l.error].join(' ').toLowerCase().includes(q);
+  });
 
   return (
     <>
@@ -347,28 +376,48 @@ export default function EmailDataTabs({ tab }) {
 
       {tab === 'emaillogs' && (
         <Card>
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-bold" style={{ color: 'var(--text3)' }}>Email Logs ({emailLogs.length})</span>
-            <button className="btn btn-ghost btn-sm" onClick={clearEmailLogs}>Clear Logs</button>
+          <div className="flex justify-between items-center gap-2 flex-wrap mb-2">
+            <span className="text-xs font-bold" style={{ color: 'var(--text3)' }}>Email Logs ({filteredLogs.length}{filteredLogs.length !== emailLogs.length ? ` of ${emailLogs.length}` : ''})</span>
+            {canEdit && emailLogs.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setConfirmClear(true)}>Clear Logs</button>}
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Type</th><th>To</th><th>Subject</th><th>Status</th><th>Sent</th></tr></thead>
-              <tbody>
-                {emailLogs.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text3)', padding: 12 }}>No email logs yet</td></tr>
-                ) : emailLogs.map((l, i) => (
-                  <tr key={i}>
-                    <td>{l.type}</td><td>{l.to}</td><td className="max-w-[240px] truncate">{l.subject}</td>
-                    <td><Badge type={l.status === 'sent' ? 'b-green' : 'b-red'}>{l.status}</Badge></td>
-                    <td>{l.sentAt ? new Date(l.sentAt).toLocaleString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex gap-1 flex-wrap mb-2">
+            {LOG_FILTERS.map(([id, label]) => (
+              <button key={id} className={`btn btn-sm ${logFilter === id ? 'btn-brand' : 'btn-ghost'}`} onClick={() => { setLogFilter(id); setLogLimit(LOG_PAGE); }}>{label}</button>
+            ))}
           </div>
+          <input className="mb-2" placeholder="Search department, recipient, subject or error..." value={logSearch} onChange={e => { setLogSearch(e.target.value); setLogLimit(LOG_PAGE); }} />
+          {filteredLogs.length === 0 ? (
+            <EmptyState icon="inbox" title="No emails found" subtitle={emailLogs.length ? 'Nothing matches this filter.' : 'Emails sent by the portal will be listed here.'} />
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>When</th><th>Type</th><th>Dept</th><th>To</th><th>CC</th><th>Subject</th><th>Status</th></tr></thead>
+                <tbody>
+                  {filteredLogs.slice(0, logLimit).map((l, i) => {
+                    const [label, badge] = LOG_TYPE[l.type] || [l.type || '—', 'b-gray'];
+                    return (
+                      <tr key={l.id || i}>
+                        <td className="text-[10px]" style={{ whiteSpace: 'nowrap' }}>{l.sentAt ? new Date(l.sentAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td>
+                        <td><Badge type={badge}>{label}</Badge></td>
+                        <td className="text-[10px]">{l.dept || '—'}</td>
+                        <td className="text-[10px]">{l.to || '—'}</td>
+                        <td className="text-[10px]" style={{ color: 'var(--text3)', maxWidth: 220 }}>{l.cc || '—'}</td>
+                        <td className="text-[10px]" style={{ maxWidth: 260 }}>{l.subject}</td>
+                        <td><Badge type={LOG_STATUS[l.status] || 'b-gray'}>{l.status}</Badge>{l.error && <div className="text-[9px]" style={{ color: 'var(--red)' }}>{l.error}</div>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {filteredLogs.length > logLimit && (
+            <div className="text-center mt-2"><button className="btn btn-ghost btn-sm" onClick={() => setLogLimit(n => n + LOG_PAGE)}>Show more ({filteredLogs.length - logLimit} remaining)</button></div>
+          )}
+          <ConfirmModal open={confirmClear} message="This permanently deletes the whole email log. Sent emails are not recalled. Continue?" onCancel={() => setConfirmClear(false)} onConfirm={clearEmailLogs} />
         </Card>
       )}
+
       {previewMail && (
         <div className="modal-bg" onClick={() => setPreviewMail(null)}>
           <div className="modal-box" style={{ maxWidth: 760, width: '95vw' }} onClick={e => e.stopPropagation()}>

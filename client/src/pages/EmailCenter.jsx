@@ -115,10 +115,6 @@ export default function EmailCenter() {
     setSuppressInput('');
   };
 
-  const autoLogs = useMemo(
-    () => logs.filter(l => ['upcoming_reminder', 'delayed', 'escalation_2', 'escalation_3'].includes(l.type)).slice(0, 40),
-    [logs]
-  );
 
   return (
     <div className="space-y-4">
@@ -154,7 +150,6 @@ export default function EmailCenter() {
           { id: 'rules', label: 'Rules & Timing' },
           { id: 'suppress', label: 'Never Email', count: rules.suppressed.length },
           { id: 'preview', label: 'Preview', count: preview ? preview.groups : null },
-          { id: 'logs', label: 'Sent Log', count: autoLogs.length },
           { id: 'emailmaster', label: 'Email Master', count: emailMaster.length },
           { id: 'emailtemplates', label: 'Email Templates' },
           { id: 'emaillogs', label: 'Email Logs', count: logs.length },
@@ -464,34 +459,6 @@ export default function EmailCenter() {
       )}
 
       {/* ── SENT LOG ── */}
-      {tab === 'logs' && (
-        <Card title="Automatic Emails Sent">
-          {autoLogs.length === 0 ? (
-            <EmptyState icon="inbox" title="No automatic emails yet" subtitle="Reminders sent by the server will appear here." />
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>When</th><th>Type</th><th>To</th><th>CC</th><th>Subject</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {autoLogs.map((l, i) => (
-                    <tr key={l.id || i}>
-                      <td className="text-[10px]">{l.sentAt ? new Date(l.sentAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td>
-                      <td><Badge type={BUCKET_BADGE[l.type] || 'b-gray'}>{BUCKET_LABEL[l.type] || l.type}</Badge></td>
-                      <td className="text-[10px]">{l.to || '—'}</td>
-                      <td className="text-[10px]" style={{ color: 'var(--text3)' }}>{l.cc || '—'}</td>
-                      <td className="text-[10px]">{l.subject}</td>
-                      <td><Badge type={STATUS_BADGE[l.status] || 'b-gray'}>{l.status}</Badge>{l.error && <div className="text-[9px]" style={{ color: 'var(--red)' }}>{l.error}</div>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      )}
-
       {(tab === 'emailmaster' || tab === 'emailtemplates' || tab === 'emaillogs') && <EmailDataTabs tab={tab} />}
 
       <ConfirmModal
