@@ -34,10 +34,11 @@ const LOG_TYPE = {
   capa_reminder: ['CAPA Reminder', 'b-amber', 'manual'],
   manager_summary: ['Manager Summary', 'b-gray', 'manual'],
   dept_report: ['Department Report', 'b-gray', 'manual'],
+  monthly_summary: ['Monthly Summary', 'b-purple', 'audit'],
   test: ['Test', 'b-gray', 'test'],
 };
 const LOG_STATUS = { sent: 'b-green', failed: 'b-red', skipped: 'b-amber', throttled: 'b-gray' };
-const LOG_FILTERS = [['all', 'All'], ['auto', 'Automatic reminders'], ['audit', 'Audit reports'], ['manual', 'Manual reminders'], ['test', 'Tests'], ['problem', 'Failed / skipped']];
+const LOG_FILTERS = [['all', 'All'], ['auto', 'Automatic reminders'], ['audit', 'Audit reports & summaries'], ['manual', 'Manual reminders'], ['test', 'Tests'], ['problem', 'Failed / skipped']];
 const LOG_PAGE = 50;
 
 export default function EmailDataTabs({ tab }) {

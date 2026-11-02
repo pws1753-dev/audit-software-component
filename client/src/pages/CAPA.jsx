@@ -8,10 +8,10 @@ import { managerDeptCodes, filterFindingsByDateRange, findingMatchesDeptCode, de
 const STEPS = ['Logged', 'In Progress', 'Submit For Review', 'Closed'];
 const STEP_INDEX = { open: 0, 'in-progress': 1, delayed: 1, 'pending-closure': 2, submitted: 2, closed: 3 };
 const ESCALATION = [
-  ['Overdue 3-6d', 'Delayed NC email -> SPOC · Every 3rd day'],
-  ['Overdue 7-14d', 'Escalation -> HOD (SPOC in CC) · Every 2 days'],
-  ['Overdue 15-21d', 'Escalation -> HOD every 2 days + MD Sir (HOD + SPOC CC) · Monthly'],
-  ['Overdue 22d+', 'Escalation -> HOD every 2 days + MD Sir (HOD + SPOC CC) · Monthly'],
+  ['First reminder', 'SPOC · 1 day before the target date'],
+  ['Overdue 1-6d', 'Reminder -> SPOC (Manager, HOD in CC) · Every 7 days'],
+  ['Overdue 7d+', 'Escalation -> HOD (SPOC in CC) · Every 7 days'],
+  ['Management', 'Monthly summary report only'],
 ];
 const nowStamp = () => new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 

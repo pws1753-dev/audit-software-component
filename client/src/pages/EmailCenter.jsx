@@ -59,6 +59,9 @@ export default function EmailCenter() {
   const [suppressInput, setSuppressInput] = useState('');
   const [deptSearch, setDeptSearch] = useState('');
   const [expanded, setExpanded] = useState('');
+  const [summaryInput, setSummaryInput] = useState('');
+  const [summaryPreview, setSummaryPreview] = useState(null);
+  const [confirmSummary, setConfirmSummary] = useState(false);
 
   const save = (next, msg) => {
     writeSyncKey('ap_email_rules', next, currentUser?.loginId);
@@ -88,6 +91,24 @@ export default function EmailCenter() {
   }, [emailMaster, depts, rules, deptSearch]);
 
   const mutedCount = rows.filter(r => !r.masterActive || r.rule.enabled === false).length;
+
+  const addSummaryTo = () => {
+    const email = summaryInput.trim().toLowerCase();
+    if (!isValidEmail(email)) { showToast('Enter a valid email address'); return; }
+    if ((rules.summaryTo || []).some(e => e.toLowerCase() === email)) { showToast('Already on the list'); return; }
+    patch({ summaryTo: [...(rules.summaryTo || []), email] }, email + ' will receive the monthly summary');
+    setSummaryInput('');
+  };
+  const runSummary = async (dryRun, resend = false) => {
+    setBusy(dryRun ? 'summary-preview' : 'summary-send');
+    try {
+      const r = await apiFetch('/api/email/monthly-summary', { method: 'POST', body: JSON.stringify({ dryRun, resend }) });
+      if (dryRun) setSummaryPreview(r);
+      else if (r.sent) showToast(`Monthly summary for ${r.period} sent to ${r.to.join(', ')}`, 5000);
+      else showToast(r.skipped || r.error || 'Nothing was sent', 5000);
+    } catch (err) { showToast('Failed: ' + err.message, 5000); }
+    setBusy('');
+  };
 
   const runEngine = async (dryRun) => {
     setBusy(dryRun ? 'preview' : 'send');
@@ -322,15 +343,46 @@ export default function EmailCenter() {
                 <label className="form-label">Escalate to the HOD after (days overdue)</label>
                 <input type="number" min={1} max={60} value={rules.hodAfterDays} onChange={e => patch({ hodAfterDays: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })} />
               </div>
-              <div>
-                <label className="form-label">Escalate to Management after (days overdue)</label>
-                <input type="number" min={1} max={120} value={rules.managementAfterDays} onChange={e => patch({ managementAfterDays: Math.max(1, Math.min(120, Number(e.target.value) || 1)) })} />
-              </div>
             </div>
             <div className="text-[10px]" style={{ color: 'var(--text3)', lineHeight: 1.6 }}>
               Each NC is reminded {rules.firstReminderDays} day(s) before its target date, then every {rules.repeatDays} day(s) until it is closed or sent for review.
-              All reminders of a department, including escalations and the audit report mail, arrive as <strong>one continuous email conversation</strong>.
+              All reminders of a department, including escalations to the HOD and the audit report mail, arrive as <strong>one continuous email conversation</strong>. Management is not copied on them.
               Every email shows the reminder number and the days delayed of each NC.
+            </div>
+          </Card>
+
+          <Card title="Monthly summary for Management">
+            <div className="flex items-center gap-3 py-1">
+              <Toggle checked={rules.monthlySummary !== false} onChange={v => patch({ monthlySummary: v }, `Monthly summary: ${v ? 'on' : 'off'}`)} />
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-bold">Send one summary report a month</div>
+                <div className="text-[10px]" style={{ color: 'var(--text3)' }}>Management is not copied on any reminder or escalation; it gets this report only.</div>
+              </div>
+            </div>
+            <div className="mt-2">
+              <label className="form-label">Send on day of the month (1-28)</label>
+              <input type="number" min={1} max={28} style={{ width: 90 }} value={rules.summaryDay || 1} onChange={e => patch({ summaryDay: Math.max(1, Math.min(28, Number(e.target.value) || 1)) })} />
+              <div className="text-[10px] mt-1" style={{ color: 'var(--text3)' }}>Covers the previous month. If the portal could not send it that day, it goes out at the next daily run.</div>
+            </div>
+            <div className="mt-3">
+              <label className="form-label">Send the summary to</label>
+              <div className="flex flex-wrap gap-1 mb-2">
+                {(rules.summaryTo || []).length === 0 && <span className="text-[10px]" style={{ color: 'var(--text3)' }}>Nobody chosen: the addresses that are "Management" for most departments in the Email Master are used.</span>}
+                {(rules.summaryTo || []).map(email => (
+                  <span key={email} className="badge b-purple flex items-center gap-1">
+                    {email}
+                    <button type="button" title="Remove" onClick={() => patch({ summaryTo: (rules.summaryTo || []).filter(e => e !== email) }, email + ' removed')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', display: 'inline-flex' }}><Icon name="x" className="w-3 h-3" /></button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input placeholder="Add a management email..." value={summaryInput} onChange={e => setSummaryInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSummaryTo()} />
+                <button className="btn btn-primary btn-sm" onClick={addSummaryTo}>+ Add</button>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => runSummary(true)}>{busy === 'summary-preview' ? <Spinner /> : <Icon name="eye" />} Preview</button>
+              <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => setConfirmSummary(true)}>{busy === 'summary-send' ? <Spinner /> : <Icon name="send" />} Send now</button>
             </div>
           </Card>
 
@@ -344,7 +396,7 @@ export default function EmailCenter() {
                 <span style={{ color: 'var(--text3)' }}>Grouping</span><strong>One email per department, in one conversation</strong>
               </div>
               <div className="flex justify-between py-1">
-                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (from {rules.hodAfterDays}d) → Management (from {rules.managementAfterDays}d)</strong>
+                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (from {rules.hodAfterDays}d overdue)</strong>
               </div>
               <p className="mt-3 text-[10px]" style={{ color: 'var(--text3)' }}>
                 The schedule itself is set by <code>EMAIL_CRON</code> on the server. Use <strong>Preview</strong> above to see
@@ -455,6 +507,25 @@ export default function EmailCenter() {
 
       {/* ── SENT LOG ── */}
       {(tab === 'emailmaster' || tab === 'emailtemplates' || tab === 'emaillogs') && <EmailDataTabs tab={tab} />}
+
+      {summaryPreview && (
+        <div className="modal-bg" onClick={() => setSummaryPreview(null)}>
+          <div className="modal-box" style={{ maxWidth: 820, width: '95vw' }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><span>Monthly summary preview</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setSummaryPreview(null)}><Icon name="x" /></button></div>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text3)' }}>
+              <div>Subject: <strong style={{ color: 'var(--text)' }}>{summaryPreview.subject}</strong></div>
+              <div>To: {(summaryPreview.to || []).join(', ')} · CC: {(summaryPreview.cc || []).join(', ') || '—'}</div>
+            </div>
+            <iframe title="Monthly summary preview" sandbox="" srcDoc={summaryPreview.html} style={{ width: '100%', height: '62vh', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }} />
+          </div>
+        </div>
+      )}
+      <ConfirmModal
+        open={confirmSummary}
+        message="This sends the monthly summary report to Management right now, even if it was already sent this month. Continue?"
+        onCancel={() => setConfirmSummary(false)}
+        onConfirm={() => { setConfirmSummary(false); runSummary(false, true); }}
+      />
 
       <ConfirmModal
         open={confirmSend}

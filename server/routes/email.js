@@ -7,7 +7,7 @@ const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
 const { wrapAsync, requireAdmin, requireRoles, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
 const { emailSendLockKey, claimEmailLock } = require('../lib/email-locks');
-const { runEmailAutomation, sendAuditSubmissionEmails, sendNcReminder } = require('../lib/email-engine');
+const { runEmailAutomation, sendAuditSubmissionEmails, sendNcReminder, sendMonthlySummary } = require('../lib/email-engine');
 const { DEFAULT_TEMPLATES, TYPE_STYLE, renderEmail, sampleVars } = require('../lib/email-render');
 
 function normalizeEmailLockItems(input) {
@@ -102,6 +102,15 @@ router.post('/nc-reminder', wrapAsync(async (req, res) => {
   requireRoles(req, ['admin', 'auditor', 'manager'], 'Only Master Admin, Auditor or Manager can send reminders');
   const result = await sendNcReminder({ findingId: req.body && req.body.findingId, by: actorOf(req) });
   res.status(result.ok ? 200 : (result.throttled ? 429 : 400)).json(result);
+}));
+
+
+// POST /api/email/monthly-summary : preview ({ dryRun: true }) or send now the Management summary for the
+// previous month. `resend` sends it again even if it already went out this month.
+router.post('/monthly-summary', wrapAsync(async (req, res) => {
+  requireAdmin(req);
+  const result = await sendMonthlySummary({ dryRun: Boolean(req.body && req.body.dryRun), resend: Boolean(req.body && req.body.resend), force: true, by: actorOf(req) });
+  res.status(result.ok === false ? 400 : 200).json(result);
 }));
 
 // POST /api/email/run

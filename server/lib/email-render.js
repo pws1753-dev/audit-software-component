@@ -35,6 +35,7 @@ const TYPE_STYLE = {
   delayed: { badge: 'OVERDUE', accent: '#d97706', title: 'Overdue NC Notification' },
   escalation: { badge: 'ESCALATION', accent: BRAND, title: 'Escalation: Overdue NC Closure' },
   capa_reminder: { badge: 'REMINDER', accent: '#d97706', title: 'CAPA Reminder' },
+  monthly_summary: { badge: 'MONTHLY REPORT', accent: '#7c3aed', title: 'Monthly NC Summary Report' },
   test: { badge: 'TEST EMAIL', accent: '#7c3aed', title: 'Template Test' },
 };
 
@@ -209,7 +210,7 @@ const DEFAULT_TEMPLATES = [
 <p style="${P}">This is <strong>reminder #{{reminder_count}}</strong>. The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open; the longest has been delayed by <strong>{{max_days_delayed}} day(s)</strong>.</p>
 {{summary}}
 {{nc_table}}
-<p style="${P}">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management, in this same conversation.</p>
+<p style="${P}">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue for 7 days or more are escalated to the Head of Department, in this same conversation.</p>
 {{button}}
 {{history}}
 <p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`,
@@ -240,10 +241,11 @@ const LEGACY_BODIES = {
 
 // Wording shipped earlier in this project. Same rule: unedited text is replaced by the current default.
 const PREVIOUS_BODIES = {'audit_submission': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">The audit of <strong>{{department_name}}</strong> has been completed and its report is now available in AuditPro.</p>\n{{summary}}\n<p style="margin:0 0 12px;">The non-conformances (NCs) raised are listed below. Please review each one and submit the corrective action, with closure evidence, in the CAPA Tracker before its target date.</p>\n{{nc_table}}\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'upcoming_reminder': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">This is a reminder that the following NC(s) of <strong>{{department_name}}</strong> reach their target closure date within the next {{window_days}} day(s).</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Please complete the corrective action and submit the closure evidence in the CAPA Tracker on or before the target date, so that the NC does not become overdue.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'delayed': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open.</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'escalation': '<p style="margin:0 0 12px;">Dear {{recipient_name}},</p>\n<p style="margin:0 0 12px;">{{nc_count}} NC(s) of <strong>{{department_name}}</strong> remain overdue and have been escalated to <strong>Level {{escalation_level}}</strong> ({{escalation_label}}).</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Immediate attention is needed. Please make sure the corrective action is completed and the closure evidence is submitted in the CAPA Tracker without further delay.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>'};
+const PREVIOUS_V2 = {"audit_submission": "<p style=\"margin:0 0 12px;\">Dear {{spoc_name}},</p>\n<p style=\"margin:0 0 12px;\">The audit of <strong>{{department_name}}</strong> has been completed and its report is now available in AuditPro.</p>\n{{summary}}\n<p style=\"margin:0 0 12px;\">The non-conformances (NCs) raised are listed below. Please review each one and submit the corrective action, with closure evidence, in the CAPA Tracker before its target date. You will receive a reminder one day before each target date and then once a week until the NC is closed; all of them arrive in this same conversation.</p>\n{{nc_table}}\n{{button}}\n{{history}}\n<p style=\"margin:18px 0 0;\">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>", "upcoming_reminder": "<p style=\"margin:0 0 12px;\">Dear {{recipient_name}},</p>\n<p style=\"margin:0 0 12px;\">This is <strong>reminder #{{reminder_count}}</strong> for the open NC(s) of <strong>{{department_name}}</strong> that reach their target closure date {{due_phrase}}.</p>\n{{summary}}\n{{nc_table}}\n<p style=\"margin:0 0 12px;\">Please complete the corrective action and submit the closure evidence in the CAPA Tracker on or before the target date, so that the NC does not become overdue. If an NC stays open, a further reminder follows in this conversation after {{repeat_days}} days.</p>\n{{button}}\n{{history}}\n<p style=\"margin:18px 0 0;\">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>", "delayed": "<p style=\"margin:0 0 12px;\">Dear {{recipient_name}},</p>\n<p style=\"margin:0 0 12px;\">This is <strong>reminder #{{reminder_count}}</strong>. The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open; the longest has been delayed by <strong>{{max_days_delayed}} day(s)</strong>.</p>\n{{summary}}\n{{nc_table}}\n<p style=\"margin:0 0 12px;\">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management, in this same conversation.</p>\n{{button}}\n{{history}}\n<p style=\"margin:18px 0 0;\">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>", "escalation": "<p style=\"margin:0 0 12px;\">Dear {{recipient_name}},</p>\n<p style=\"margin:0 0 12px;\">This is <strong>reminder #{{reminder_count}}</strong>. {{nc_count}} NC(s) of <strong>{{department_name}}</strong> remain overdue (the longest by <strong>{{max_days_delayed}} day(s)</strong>) and have been escalated to <strong>Level {{escalation_level}}</strong> ({{escalation_label}}).</p>\n{{summary}}\n{{nc_table}}\n<p style=\"margin:0 0 12px;\">Immediate attention is needed. Please make sure the corrective action is completed and the closure evidence is submitted in the CAPA Tracker without further delay.</p>\n{{button}}\n{{history}}\n<p style=\"margin:18px 0 0;\">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>"};
 const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
 function isLegacyTemplate(row, type) {
   const body = norm(row.body);
-  return Boolean(LEGACY_BODIES[type]) && (body === norm(LEGACY_BODIES[type]) || body === norm(PREVIOUS_BODIES[type]));
+  return Boolean(LEGACY_BODIES[type]) && [LEGACY_BODIES[type], PREVIOUS_BODIES[type], PREVIOUS_V2[type]].some(b => b && body === norm(b));
 }
 
 // Stored template for a type (admin-edited text wins), else the built-in default.
@@ -276,6 +278,69 @@ function renderEmail(tpl, type, vars = {}, opts = {}) {
   return { subject, html, text: htmlToText(content) + `\n\n--\nOnePWS AuditPro: ${PORTAL_URL}\nThis is an automated message; replies are not monitored.` };
 }
 
+// ── monthly management summary ────────────────────────
+function renderMonthlySummary(data) {
+  const { range, totals, departments, topOverdue, prev, todayYmd } = data;
+  const accent = TYPE_STYLE.monthly_summary.accent;
+  const [ty, tm, td] = String(todayYmd).split('-').map(Number);
+  const asOn = `${String(td).padStart(2, '0')} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][tm - 1]} ${ty}`;
+  const delta = (cur, before, upIsBad) => {
+    if (before === null || before === undefined) return '';
+    const d = cur - before;
+    if (!d) return `<div style="font:11px ${FONT};color:#9ca3af;margin-top:2px;">no change</div>`;
+    const bad = upIsBad ? d > 0 : d < 0;
+    return `<div style="font:600 11px ${FONT};color:${bad ? '#b91c1c' : '#15803d'};margin-top:2px;">${d > 0 ? '&#9650;' : '&#9660;'} ${Math.abs(d)} vs previous report</div>`;
+  };
+  const kpi = (label, value, extra) => `<td style="padding:12px 14px;border-right:1px solid #e5e7eb;vertical-align:top;"><div style="font:600 10.5px ${FONT};color:#6b7280;text-transform:uppercase;letter-spacing:.4px;">${escapeHtml(label)}</div><div style="font:700 22px ${FONT};color:#111827;margin-top:3px;">${escapeHtml(String(value))}</div>${extra || ''}</td>`;
+  const kpis = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-left:4px solid ${accent};border-radius:6px;background:#f9fafb;margin:14px 0;"><tr>
+${kpi('Open NCs', totals.open, delta(totals.open, prev && prev.open, true))}${kpi('Overdue', totals.overdue, delta(totals.overdue, prev && prev.overdue, true))}${kpi('Raised in ' + range.short.split(' ')[0], totals.raised)}${kpi('Closed in ' + range.short.split(' ')[0], totals.closedInMonth)}${kpi('Closure rate', totals.closurePct + '%', delta(totals.closurePct, prev && prev.closurePct, false))}
+</tr></table>`;
+
+  const th = (t, align = 'left') => `<th align="${align}" style="padding:8px 10px;background:#f3f4f6;border-bottom:2px solid #d1d5db;font:600 10.5px ${FONT};color:#4b5563;text-transform:uppercase;letter-spacing:.4px;">${t}</th>`;
+  const tdS = (extra = '') => `padding:8px 10px;border-bottom:1px solid #e5e7eb;font:12.5px ${FONT};color:#1f2937;${extra}`;
+  const scoreChip = v => v === null || v === undefined ? '<span style="color:#9ca3af;">-</span>'
+    : `<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:${v >= 80 ? '#16a34a' : v >= 60 ? '#d97706' : '#dc2626'};color:#fff;font:600 11px ${FONT};">${v}%</span>`;
+  const deptRows = departments.map((r, i) => `<tr style="background:${i % 2 ? '#fafafa' : '#fff'};">
+<td style="${tdS('font-weight:600;')}">${escapeHtml(r.name)}</td>
+<td style="${tdS()}" align="right">${r.open}</td>
+<td style="${tdS(r.overdue ? 'color:#b91c1c;font-weight:700;' : 'color:#9ca3af;')}" align="right">${r.overdue || '-'}</td>
+<td style="${tdS('white-space:nowrap;')}" align="right">${r.maxOverdue ? r.maxOverdue + ' days' : '-'}</td>
+<td style="${tdS()}" align="right">${r.raised || '-'}</td>
+<td style="${tdS()}" align="right">${r.closedInMonth || '-'}</td>
+<td style="${tdS()}" align="right">${r.closurePct}%</td>
+<td style="${tdS()}" align="right">${scoreChip(r.auditScore)}</td></tr>`).join('');
+  const deptTable = departments.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;border-spacing:0;margin:8px 0 14px;"><thead><tr>${th('Department')}${th('Open', 'right')}${th('Overdue', 'right')}${th('Longest delay', 'right')}${th('Raised', 'right')}${th('Closed', 'right')}${th('Closure', 'right')}${th('Audit score', 'right')}</tr></thead><tbody>${deptRows}</tbody></table>`
+    : `<p style="margin:0 0 12px;color:#6b7280;">No findings are recorded yet.</p>`;
+
+  const sev = k => SEV[sevKey(k)];
+  const topRows = topOverdue.map((n, i) => `<tr style="background:${i % 2 ? '#fafafa' : '#fff'};">
+<td style="${tdS()}"><div style="font-weight:700;">${escapeHtml(n.ref || '')}</div>${n.desc ? `<div style="font:11.5px ${FONT};color:#6b7280;margin-top:2px;">${escapeHtml(shortText(n.desc, 110))}</div>` : ''}</td>
+<td style="${tdS()}">${escapeHtml(n.dept)}</td>
+<td style="${tdS()}"><span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${sev(n.sev).bg};color:#fff;font:600 11px ${FONT};">${sev(n.sev).label}</span></td>
+<td style="${tdS('white-space:nowrap;')}">${escapeHtml(fmtDue(n.due))}</td>
+<td style="${tdS('color:#b91c1c;font-weight:700;white-space:nowrap;')}" align="right">${n.days} days</td></tr>`).join('');
+  const topTable = topOverdue.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;border-spacing:0;margin:8px 0 14px;"><thead><tr>${th('NC / Observation')}${th('Department')}${th('Severity')}${th('Target date')}${th('Overdue', 'right')}</tr></thead><tbody>${topRows}</tbody></table>`
+    : `<p style="margin:0 0 12px;color:#15803d;font-weight:600;">No NC is overdue.</p>`;
+
+  const h = t => `<div style="margin:20px 0 2px;font:700 12px ${FONT};color:#374151;text-transform:uppercase;letter-spacing:.5px;">${t}</div>`;
+  const content = `<p style="margin:0 0 12px;">Dear Management Team,</p>
+<p style="margin:0 0 12px;">This is the monthly non-conformance (NC) status report for <strong>${escapeHtml(range.label)}</strong>, with the position as on <strong>${asOn}</strong>. ${totals.auditsInMonth} audit(s) were completed in the month.</p>
+${kpis}
+${h('Department-wise status')}
+${deptTable}
+${h('Longest overdue NCs')}
+${topTable}
+${totals.underReview ? `<p style="margin:0 0 8px;color:#6b7280;font-size:12.5px;">${totals.underReview} NC(s) have a closure submitted and are waiting for the auditor's review; they are counted as open but not as overdue.</p>` : ''}
+<p style="margin:0 0 12px;color:#6b7280;font-size:12.5px;">Reminders and escalations for individual NCs go to the department SPOC and Head of Department every week. Management receives only this summary, once a month.</p>
+${buildButton('Open the Dashboard in AuditPro', PORTAL_URL, accent)}
+<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`;
+  const subject = `Monthly NC Summary Report - ${range.label}`;
+  const html = shell({ type: 'monthly_summary', content, preheader: `${totals.open} open NCs, ${totals.overdue} overdue, ${totals.closedInMonth} closed in ${range.label}`, title: `Monthly NC Summary: ${range.label}` });
+  return { subject, html, text: htmlToText(content) + `\n\n--\nOnePWS AuditPro: ${PORTAL_URL}\nThis is an automated message; replies are not monitored.` };
+}
+
 // Sample values so an admin can preview / test-send a template without real NCs.
 function sampleVars(type) {
   const today = new Date();
@@ -298,5 +363,5 @@ function sampleVars(type) {
 
 module.exports = {
   PORTAL_URL, escapeHtml, fillTemplate, buildNcTable, buildSummary, buildButton, htmlToText,
-  sampleVars, buildHistory, DEFAULT_TEMPLATES, DEFAULT_BY_TYPE, TYPE_STYLE, isLegacyTemplate, pickTemplate, renderEmail,
+  sampleVars, buildHistory, renderMonthlySummary, DEFAULT_TEMPLATES, DEFAULT_BY_TYPE, TYPE_STYLE, isLegacyTemplate, pickTemplate, renderEmail,
 };

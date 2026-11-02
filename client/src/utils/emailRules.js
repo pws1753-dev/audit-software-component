@@ -7,7 +7,9 @@ export const EMAIL_RULES_DEFAULTS = {
   firstReminderDays: 1,
   repeatDays: 7,
   hodAfterDays: 7,
-  managementAfterDays: 15,
+  monthlySummary: true,
+  summaryDay: 1,
+  summaryTo: [],
   ccManager: true,
   ccHod: true,
   ccGlobal: true,
@@ -20,7 +22,7 @@ export const EMAIL_RULES_DEFAULTS = {
 export const EMAIL_TYPES = [
   { key: 'upcoming_reminder', label: 'First reminder', desc: 'One day before the target date (not yet late)', to: 'SPOC' },
   { key: 'delayed', label: 'Overdue reminder', desc: 'Weekly while the NC is late, until it is 7 days overdue', to: 'SPOC' },
-  { key: 'escalation', label: 'Escalation', desc: 'Weekly: 7+ days overdue goes to the HOD; 15+ days to Management', to: 'HOD' },
+  { key: 'escalation', label: 'Escalation', desc: 'Weekly: 7+ days overdue goes to the HOD (Management gets the monthly summary only)', to: 'HOD' },
 ];
 
 export function mergeEmailRules(stored) {
@@ -30,6 +32,7 @@ export function mergeEmailRules(stored) {
     ...s,
     types: { ...EMAIL_RULES_DEFAULTS.types, ...(s.types || {}) },
     suppressed: Array.isArray(s.suppressed) ? s.suppressed : [],
+    summaryTo: Array.isArray(s.summaryTo) ? s.summaryTo : [],
     depts: s.depts && typeof s.depts === 'object' ? s.depts : {},
   };
 }

@@ -9,9 +9,10 @@
 // Reminder policy (all of it in ONE continuous email conversation per department):
 //   first reminder   `firstReminderDays` (default 1) day(s) before an NC's target date
 //   then             every `repeatDays` (default 7) days until the NC is closed or sent for review
-//   recipient level  NC overdue < hodAfterDays (7)        -> SPOC, Manager / HOD in CC
-//                    NC overdue >= hodAfterDays           -> HOD, SPOC / Manager in CC
-//                    NC overdue >= managementAfterDays (15) -> Management, HOD / Manager / SPOC in CC
+//   recipient level  NC overdue < hodAfterDays (7)  -> SPOC, Manager / HOD in CC
+//                    NC overdue >= hodAfterDays     -> HOD, SPOC / Manager in CC
+//   Management is NOT on any reminder or escalation. It receives one summary report a month
+//   (see sendMonthlySummary).
 //   Each email shows the reminder number and the days delayed of every NC, and lists the earlier
 //   messages of the conversation. One email per department per run, never one per NC or per level.
 //
@@ -22,7 +23,8 @@ const { getMailer, SMTP_FROM } = require('./mailer');
 const { mergeEmailLogs } = require('./sync-helpers');
 const { claimEmailLock, commitEmailLock, releaseEmailLock, emailSendLockKey } = require('./email-locks');
 const { ncKey, loadNcStates, saveNcStates, nextMessage, recordMessage } = require('./email-thread');
-const { buildNcTable: renderNcTable, buildSummary, buildHistory, pickTemplate, renderEmail } = require('./email-render');
+const { buildNcTable: renderNcTable, buildSummary, buildHistory, pickTemplate, renderEmail, renderMonthlySummary } = require('./email-render');
+const { buildMonthlySummary, monthRange, prevMonthKey } = require('./email-summary');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TZ = process.env.EMAIL_CRON_TZ || 'Asia/Kolkata';
@@ -34,18 +36,20 @@ const EMAIL_RULES_DEFAULTS = {
   firstReminderDays: 1,
   repeatDays: 7,
   hodAfterDays: 7,
-  managementAfterDays: 15,
+  monthlySummary: true,
+  summaryDay: 1,
+  summaryTo: [],
   ccManager: true,
   ccHod: true,
   ccGlobal: true,
   types: { upcoming_reminder: true, delayed: true, escalation: true },
-  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 30 },
   suppressed: [],
   depts: {},
 };
 
 const READ_KEYS = ['ap_finds', 'ap_depts', 'ap_users', 'ap_auds', 'ap_completed_audits', 'ap_email_master', 'ap_email_templates', 'ap_required_cc_emails', 'ap_system_settings', 'ap_email_rules'];
 
+const EMAIL_RE_LATE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const clampInt = (v, d, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d; };
 function mergeRules(stored) {
   const s = stored && typeof stored === 'object' ? stored : {};
@@ -53,13 +57,14 @@ function mergeRules(stored) {
     ...EMAIL_RULES_DEFAULTS,
     ...s,
     types: { ...EMAIL_RULES_DEFAULTS.types, ...(s.types || {}) },
-    frequencies: { ...EMAIL_RULES_DEFAULTS.frequencies, ...(s.frequencies || {}) },
     suppressed: Array.isArray(s.suppressed) ? s.suppressed : [],
     depts: s.depts && typeof s.depts === 'object' ? s.depts : {},
     firstReminderDays: clampInt(s.firstReminderDays, EMAIL_RULES_DEFAULTS.firstReminderDays, 0, 14),
     repeatDays: clampInt(s.repeatDays, EMAIL_RULES_DEFAULTS.repeatDays, 1, 30),
     hodAfterDays: clampInt(s.hodAfterDays, EMAIL_RULES_DEFAULTS.hodAfterDays, 1, 60),
-    managementAfterDays: clampInt(s.managementAfterDays, EMAIL_RULES_DEFAULTS.managementAfterDays, 1, 120),
+    monthlySummary: s.monthlySummary !== false,
+    summaryDay: clampInt(s.summaryDay, EMAIL_RULES_DEFAULTS.summaryDay, 1, 28),
+    summaryTo: Array.isArray(s.summaryTo) ? s.summaryTo.map(e => String(e).trim()).filter(e => EMAIL_RE_LATE.test(e)) : [],
   };
 }
 
@@ -138,21 +143,18 @@ function recipientsFor(bucket, master, globalCc, rules = EMAIL_RULES_DEFAULTS, d
   const spoc = splitEmails(master && master.email);
   const manager = splitEmails(master && master.reportingEmail);
   const hod = splitEmails(master && master.hodEmail);
-  const management = splitEmails(master && master.managementEmail);
   const overrideTo = splitEmails((Array.isArray(deptRule.overrideTo) ? deptRule.overrideTo : []).join(','));
 
   let to;
   if (overrideTo.length) to = overrideTo;
-  else if (bucket === 'escalation_3') to = dedupe([...management]);
   else if (bucket === 'escalation_2') to = dedupe([...hod]);
   else to = dedupe([...spoc]);
 
   // Never drop an email on the floor because one field is blank: fall back to the *next* level
-  // that has an address. (Taking all levels at once would put management on every HOD reminder.)
+  // that has an address (never to several levels at once). Management is deliberately not part of
+  // this chain: it only receives the monthly summary report.
   if (!to.length) {
-    const chain = bucket === 'escalation_3' ? [management, hod, manager, spoc]
-      : bucket === 'escalation_2' ? [hod, manager, spoc, management]
-        : [spoc, manager, hod, management];
+    const chain = bucket === 'escalation_2' ? [hod, manager, spoc] : [spoc, manager, hod];
     to = dedupe(chain.find(level => level.length) || []);
   }
   if (!to.length) return { to: [], cc: [] };
@@ -197,12 +199,12 @@ async function appendEmailLogs(collection, logs, by) {
 
 // ── ENGINE ───────────────────────────────────────────
 // ── REMINDER PLAN (pure, unit-testable) ──────────────
-const LEVEL_BUCKET = ['upcoming_reminder', 'delayed', 'escalation_2', 'escalation_3'];
-const LEVEL_TYPE_KEY = ['upcoming_reminder', 'delayed', 'escalation', 'escalation'];
-const LEVEL_ACCENT = ['#2563eb', '#d97706', '#c0392b', '#c0392b'];
+const LEVEL_BUCKET = ['upcoming_reminder', 'delayed', 'escalation_2'];
+const LEVEL_TYPE_KEY = ['upcoming_reminder', 'delayed', 'escalation'];
+const LEVEL_ACCENT = ['#2563eb', '#d97706', '#c0392b'];
 
 function levelFor(overdue, rules) {
-  return overdue >= rules.managementAfterDays ? 3 : overdue >= rules.hodAfterDays ? 2 : overdue >= 1 ? 1 : 0;
+  return overdue >= rules.hodAfterDays ? 2 : overdue >= 1 ? 1 : 0;
 }
 
 // Is this NC due a reminder today, and how late is it? `state` = { count, lastDay } from the NC's history.
@@ -235,14 +237,14 @@ function reminderVars({ rows, level, deptName, master, rules, todayMs }) {
   const spoc = (master && master.spocName) || deptName;
   const vars = {
     department_name: deptName, spoc_name: spoc,
-    recipient_name: level >= 3 ? 'Management Team' : level === 2 ? `Head of Department, ${deptName}` : spoc,
+    recipient_name: level >= 2 ? `Head of Department, ${deptName}` : spoc,
     nc_count: rows.length, nc_table: buildNcTable(rows),
     nc_number: worst.f.ref || '', target_date: worst.f.due || '', delay_days: maxDelay, max_days_delayed: maxDelay,
     clause_name: worst.f.clause || '', clause_description: worst.f.desc || '',
     window_days: rules.firstReminderDays, repeat_days: rules.repeatDays, reminder_count: reminderNo,
     due_phrase: minDue === 0 ? 'today' : minDue === 1 ? 'tomorrow' : `in ${minDue} days`,
     escalation_level: level >= 2 ? String(level) : '',
-    escalation_label: level >= 3 ? 'Management review' : level === 2 ? 'Head of Department review' : '',
+    escalation_label: level >= 2 ? 'Head of Department review' : '',
     audit_name: worst.f.auditRef || '',
   };
   vars.summary = buildSummary([
@@ -443,6 +445,13 @@ async function runEmailAutomation(options = {}) {
       summary.auditReports = { sent: reports.sent, failed: reports.failed, skipped: reports.skipped };
       if (reports.sent || reports.failed) console.log(`[AuditPro] Audit report emails: ${reports.sent} sent, ${reports.failed} failed`);
     } catch (err) { console.error('[AuditPro] Audit report catch-up failed:', err); }
+    // Once a month, the summary for Management (no-op on every other day).
+    try {
+      const monthly = await sendMonthlySummary({ by, today: todayStr });
+      summary.monthlySummary = { sent: monthly.sent || 0, skipped: monthly.skipped || null, error: monthly.error || null };
+      if (monthly.sent) console.log(`[AuditPro] Monthly summary sent for ${monthly.period}`);
+      if (monthly.error) console.error('[AuditPro] Monthly summary failed:', monthly.error);
+    } catch (err) { console.error('[AuditPro] Monthly summary failed:', err); }
   }
   return summary;
 }
@@ -466,7 +475,7 @@ function resolveDeptRecipients(ctx, deptCode, bucket, { auditorName = '', rows =
     ...(master || {}),
     email: dedupe([...splitEmails(master && master.email), ...deptUsers.filter(u => u.role === 'spoc').flatMap(u => splitEmails(u.email))]).join(', '),
     reportingEmail: dedupe([...splitEmails(master && master.reportingEmail), ...deptUsers.filter(u => u.role === 'manager').flatMap(u => splitEmails(u.email))]).join(', '),
-    managementEmail: dedupe([...splitEmails(master && master.managementEmail), ...users.filter(u => u.role === 'admin' || u.role === 'viewer').flatMap(u => splitEmails(u.email))]).join(', '),
+    managementEmail: '',
   };
   const resolved = recipientsFor(bucket, resolvedMaster, globalCc, rules, rules.depts[deptCode] || {}, requiredCc);
   const to = strip(resolved.to);
@@ -634,6 +643,71 @@ async function sendDueAuditSubmissionEmails(options = {}) {
   return sendAuditSubmissionEmails({ auditIds: ready.map(a => String(a.id || a.ref)), by });
 }
 
+
+// ── MONTHLY MANAGEMENT SUMMARY ───────────────────────
+// Management gets ONE email a month (the previous month's report, sent on `summaryDay` or at the first
+// run after it). Reminders and escalations never go to Management.
+function summaryRecipients(ctx) {
+  const explicit = dedupe(splitEmails((ctx.rules.summaryTo || []).join(',')));
+  if (explicit.length) return { to: explicit, source: 'configured' };
+  // Not configured: the addresses that are "management" for at least half of the active departments
+  // (a department-specific contact, e.g. a vendor's, must not receive the company-wide report).
+  const active = ctx.emailMaster.filter(m => String(m.status || 'active').toLowerCase() !== 'inactive');
+  const counts = new Map();
+  active.forEach(m => dedupe(splitEmails(m.managementEmail)).forEach(e => counts.set(e.toLowerCase(), (counts.get(e.toLowerCase()) || 0) + 1)));
+  const need = Math.max(1, Math.ceil(active.length / 2));
+  return { to: [...counts.entries()].filter(([, n]) => n >= need).map(([e]) => e), source: 'email-master' };
+}
+
+async function sendMonthlySummary(options = {}) {
+  const by = String(options.by || 'cron');
+  const dryRun = Boolean(options.dryRun);
+  const tz = options.tz || DEFAULT_TZ;
+  const collection = await getCollection();
+  const data = await readKeys(collection);
+  const ctx = emailContext(data);
+  const { settings, rules } = ctx;
+  if (settings.emailNotifications === false) return { ok: true, sent: 0, skipped: 'Email notifications are switched off in System Settings' };
+  if (rules.enabled === false) return { ok: true, sent: 0, skipped: 'Automatic emails are paused in the Email Center' };
+  if (rules.monthlySummary === false && !options.force) return { ok: true, sent: 0, skipped: 'The monthly summary is switched off in the Email Center' };
+
+  const todayStr = options.today || todayYmd(tz);
+  if (!options.force && Number(todayStr.slice(8, 10)) < rules.summaryDay) return { ok: true, sent: 0, notDue: true, skipped: `Sent from day ${rules.summaryDay} of the month` };
+
+  const range = monthRange(todayStr);
+  const prevRow = await collection.findOne({ key: `_monthly_summary_${prevMonthKey(range.key)}` });
+  const report = buildMonthlySummary({
+    findings: data.ap_finds, audits: data.ap_completed_audits, depts: ctx.depts, todayYmd: todayStr,
+    prev: prevRow && prevRow.value && prevRow.value.totals,
+  });
+  const { to, source } = summaryRecipients(ctx);
+  const suppressed = new Set(splitEmails((rules.suppressed || []).join(',')).map(e => e.toLowerCase()));
+  const strip = list => list.filter(e => !suppressed.has(e.toLowerCase()));
+  const toList = strip(to);
+  if (!toList.length) return { ok: false, sent: 0, error: 'No Management email address is configured. Add one in Email Center > Rules & Timing.' };
+  const cc = strip(withoutAll(dedupe([...ctx.users.filter(u => u.role === 'admin').flatMap(u => splitEmails(u.email)), ...ctx.globalCc]), toList));
+  const mail = renderMonthlySummary(report);
+  const base = { ok: true, period: range.label, subject: mail.subject, to: toList, cc, source, totals: report.totals };
+  if (dryRun) return { ...base, sent: 0, dryRun: true, html: mail.html };
+
+  const lockKey = `monthly_summary:${range.key}`;
+  if (!options.resend && !(await claimEmailLock(collection, lockKey, 365, { bucket: 'monthly_summary', refs: [range.key] }, by))) {
+    return { ...base, sent: 0, alreadySent: true, skipped: `The ${range.label} summary was already sent` };
+  }
+  const logEntry = status => ({ id: `monthly_summary_${range.key}_${Date.now()}`, type: 'monthly_summary', to: toList.join(', '), cc: cc.join(', '), subject: mail.subject, status, sentAt: new Date().toISOString() });
+  try {
+    await getMailer().sendMail({ from: SMTP_FROM, to: toList, cc, subject: mail.subject, html: mail.html, text: mail.text });
+    if (!options.resend) await commitEmailLock(collection, lockKey, 365, true, by);
+    await collection.updateOne({ key: `_monthly_summary_${range.key}` }, { $set: { key: `_monthly_summary_${range.key}`, value: { key: range.key, totals: report.totals, sentAt: new Date().toISOString(), by }, updatedAt: new Date() } }, { upsert: true });
+    await appendEmailLogs(collection, [logEntry('sent')], `email-engine:${by}`);
+    return { ...base, sent: 1 };
+  } catch (err) {
+    if (!options.resend) await commitEmailLock(collection, lockKey, 365, false, by);
+    await appendEmailLogs(collection, [{ ...logEntry('failed'), error: err.message }], `email-engine:${by}`);
+    return { ok: false, sent: 0, error: `Email could not be sent: ${err.message}` };
+  }
+}
+
 // ── MANUAL NC REMINDER (CAPA "Remind" button) ────────
 // One reminder to the department SPOC for a single NC, using the delayed (overdue) or upcoming
 // template. Limited to one per NC per day so the button cannot be used to spam a department.
@@ -695,4 +769,4 @@ async function sendNcReminder(options = {}) {
   }
 }
 
-module.exports = { reminderPlan, levelFor, sendDueAuditSubmissionEmails, sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
+module.exports = { sendMonthlySummary, summaryRecipients, reminderPlan, levelFor, sendDueAuditSubmissionEmails, sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
