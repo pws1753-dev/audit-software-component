@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { SYNC_KEYS, normalizeFindingsData, loadPermissions, genId } from '../utils/helpers';
 import { mergeEmailRules } from '../utils/emailRules';
+import { dedupeDeptAliases } from '../utils/dashboardHelpers';
 import { apiFetch } from '../utils/api';
 import { signIn, signOut, fetchCurrentUser } from '../utils/authApi';
 import { EMPTY_SESSION } from '../utils/auditEngine';
@@ -90,6 +91,10 @@ export function AppProvider({ children }) {
   const getMediaLibrary = useCallback(() => mediaLibraryData, [mediaLibraryData]);
   const completedAuditsData = useMemo(() => (syncData.ap_completed_audits || []).filter(a => a && !a.deletedAt), [syncData.ap_completed_audits]);
   const getCompletedAudits = useCallback(() => completedAuditsData, [completedAuditsData]);
+  // One entry per real department, for dropdowns and tables. Matching code must keep using getDepts():
+  // a user or finding may still carry the code of the hidden duplicate record.
+  const deptOptionsData = useMemo(() => dedupeDeptAliases(deptsData, visibleFindings, completedAuditsData), [deptsData, visibleFindings, completedAuditsData]);
+  const getDeptOptions = useCallback(() => deptOptionsData, [deptOptionsData]);
   const plannedAuditsData = useMemo(() => syncData.ap_planned_audits || [], [syncData.ap_planned_audits]);
   const getPlannedAudits = useCallback(() => plannedAuditsData, [plannedAuditsData]);
   const importLogsData = useMemo(() => syncData.ap_import_logs || [], [syncData.ap_import_logs]);
@@ -332,7 +337,7 @@ export function AppProvider({ children }) {
     pageAction, setPageAction,
     activeAudit, setActiveAudit, auditSession, setAuditSession,
     // Data getters
-    getFindings, getUsers, getDepts, getAuditors, getCheckpoints,
+    getFindings, getUsers, getDepts, getDeptOptions, getAuditors, getCheckpoints,
     getLearnings, getEmailMaster, getEmailTemplates, getEmailLogs,
     getRootCauses, getMediaLibrary, getCompletedAudits, getPlannedAudits,
     getImportLogs, getAuditDrafts, getRequiredCcEmails, getCapaDue, getSystemSettings, getEmailRules,
@@ -349,7 +354,7 @@ export function AppProvider({ children }) {
     capaSelectedId,
     pageAction,
     activeAudit, auditSession,
-    getFindings, getUsers, getDepts, getAuditors, getCheckpoints,
+    getFindings, getUsers, getDepts, getDeptOptions, getAuditors, getCheckpoints,
     getLearnings, getEmailMaster, getEmailTemplates, getEmailLogs,
     getRootCauses, getMediaLibrary, getCompletedAudits, getPlannedAudits,
     getImportLogs, getAuditDrafts, getRequiredCcEmails, getCapaDue, getSystemSettings, getEmailRules,

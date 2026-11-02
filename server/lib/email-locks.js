@@ -74,4 +74,10 @@ async function commitEmailLock(collection, lockKey, frequencyDays, success, by) 
   await collection.updateOne({ key: emailSendLockKey(lockKey) }, update);
 }
 
-module.exports = { EMAIL_SEND_LOCK_PREFIX, EMAIL_LOCK_PENDING_MS, emailSendLockKey, normalizeFrequencyDays, claimEmailLock, commitEmailLock };
+// Hand a claim back without starting a repeat window (used for short mutual-exclusion locks).
+async function releaseEmailLock(collection, lockKey) {
+  const released = new Date(0);
+  await collection.updateOne({ key: emailSendLockKey(lockKey) }, { $set: { nextAllowedAt: released, pendingUntil: released, committedAt: new Date(), releasedAt: new Date() } });
+}
+
+module.exports = { releaseEmailLock, EMAIL_SEND_LOCK_PREFIX, EMAIL_LOCK_PENDING_MS, emailSendLockKey, normalizeFrequencyDays, claimEmailLock, commitEmailLock };

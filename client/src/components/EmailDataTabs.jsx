@@ -349,12 +349,12 @@ export default function EmailDataTabs({ tab }) {
             {tplDraft ? (
               <div className="space-y-2">
                 <div><label className="form-label">Template Name</label><input value={tplDraft.name} onChange={e => setTplDraft(p => ({ ...p, name: e.target.value }))} /></div>
-                <div><label className="form-label">Subject</label><input value={tplDraft.subject} onChange={e => setTplDraft(p => ({ ...p, subject: e.target.value }))} /></div>
+                <div><label className="form-label">Subject (used for test emails; reminders in a conversation always keep one fixed subject so Gmail / Outlook thread them)</label><input value={tplDraft.subject} onChange={e => setTplDraft(p => ({ ...p, subject: e.target.value }))} /></div>
                 <div><label className="form-label">Body (HTML). The branded header, footer and plain-text copy are added automatically.</label><textarea style={{ height: 220, resize: 'vertical', fontFamily: 'monospace', fontSize: 11 }} value={tplDraft.body} onChange={e => setTplDraft(p => ({ ...p, body: e.target.value }))} /></div>
                 <label className="flex items-center gap-2 text-xs" style={{ cursor: 'pointer' }}>
                   <input type="checkbox" style={{ width: 'auto' }} checked={tplDraft.active} onChange={e => setTplDraft(p => ({ ...p, active: e.target.checked }))} /> Active
                 </label>
-                <div className="text-[10px]" style={{ color: 'var(--text3)' }}>Variables: {'{{department_name}}, {{spoc_name}}, {{recipient_name}}, {{nc_count}}, {{nc_table}}, {{summary}}, {{button}}, {{audit_name}}, {{submitted_at}}, {{nc_number}}, {{target_date}}, {{delay_days}}, {{clause_name}}, {{window_days}}, {{escalation_level}}, {{escalation_label}}'}</div>
+                <div className="text-[10px]" style={{ color: 'var(--text3)' }}>Variables: {'{{department_name}}, {{spoc_name}}, {{recipient_name}}, {{nc_count}}, {{nc_table}}, {{summary}}, {{button}}, {{audit_name}}, {{submitted_at}}, {{nc_number}}, {{target_date}}, {{delay_days}}, {{clause_name}}, {{reminder_count}}, {{max_days_delayed}}, {{due_phrase}}, {{repeat_days}}, {{history}}, {{escalation_level}}, {{escalation_label}}'}</div>
                 {canEdit && (
                   <>
                     <div className="flex gap-2">
@@ -391,7 +391,7 @@ export default function EmailDataTabs({ tab }) {
           ) : (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>When</th><th>Type</th><th>Dept</th><th>To</th><th>CC</th><th>Subject</th><th>Status</th></tr></thead>
+                <thead><tr><th>When</th><th>Type</th><th>Dept</th><th>Reminder</th><th>To</th><th>CC</th><th>Subject</th><th>Status</th></tr></thead>
                 <tbody>
                   {filteredLogs.slice(0, logLimit).map((l, i) => {
                     const [label, badge] = LOG_TYPE[l.type] || [l.type || '—', 'b-gray'];
@@ -400,6 +400,7 @@ export default function EmailDataTabs({ tab }) {
                         <td className="text-[10px]" style={{ whiteSpace: 'nowrap' }}>{l.sentAt ? new Date(l.sentAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}</td>
                         <td><Badge type={badge}>{label}</Badge></td>
                         <td className="text-[10px]">{l.dept || '—'}</td>
+                        <td className="text-[10px]" style={{ whiteSpace: 'nowrap' }}>{l.reminderNo ? `#${l.reminderNo}${l.maxDelay > 0 ? ` · ${l.maxDelay}d late` : ''}` : '—'}</td>
                         <td className="text-[10px]">{l.to || '—'}</td>
                         <td className="text-[10px]" style={{ color: 'var(--text3)', maxWidth: 220 }}>{l.cc || '—'}</td>
                         <td className="text-[10px]" style={{ maxWidth: 260 }}>{l.subject}</td>

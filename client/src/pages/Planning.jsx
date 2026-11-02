@@ -12,7 +12,7 @@ const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 export default function Planning() {
   const {
     getPlannedAudits,
-    getDepts,
+    getDepts, getDeptOptions,
     getAuditors,
     getCheckpoints,
     getCompletedAudits,
@@ -28,6 +28,7 @@ export default function Planning() {
 
   const planned = getPlannedAudits();
   const depts = getDepts();
+  const deptOptions = getDeptOptions();
   const auditors = getAuditors();
   const checkpoints = getCheckpoints();
   const completed = getCompletedAudits();
@@ -468,7 +469,7 @@ export default function Planning() {
                 </label>
                 <select value={adhocDept} onChange={e => setAdhocDept(e.target.value)}>
                   <option value="">Select Audit Area / Zone</option>
-                  {depts.map(d => (
+                  {deptOptions.map(d => (
                     <option key={d.code} value={d.code}>{d.name} ({d.code})</option>
                   ))}
                 </select>
@@ -655,7 +656,7 @@ export default function Planning() {
                     onChange={e => setAdhocFilterDept(e.target.value)}
                   >
                     <option value="ALL">All Responsible Depts</option>
-                    {depts.map(d => (
+                    {deptOptions.map(d => (
                       <option key={d.code} value={d.name}>{d.name}</option>
                     ))}
                   </select>
@@ -806,7 +807,7 @@ export default function Planning() {
                 <label className="form-label">DEPARTMENT *</label>
                 <select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}>
                   <option value="">Select department...</option>
-                  {depts.map(d => <option key={d.id || d.code} value={d.code}>{d.name}</option>)}
+                  {deptOptions.map(d => <option key={d.id || d.code} value={d.code}>{d.name}</option>)}
                 </select>
               </div>
 

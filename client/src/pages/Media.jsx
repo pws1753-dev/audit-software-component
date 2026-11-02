@@ -20,9 +20,10 @@ const mediaUrl = (m) => m.secure_url || m.url || '#';
 const isImage = (m) => m.file_type === 'image' || m.resource_type === 'image' || /\.(jpe?g|png|gif|webp|bmp)(\?|#|$)/i.test(mediaUrl(m));
 
 export default function Media() {
-  const { getMediaLibrary, getDepts, getEmailMaster, writeSyncKey, currentUser, refreshSync, setPageAction } = useApp();
+  const { getMediaLibrary, getDepts, getDeptOptions, getEmailMaster, writeSyncKey, currentUser, refreshSync, setPageAction } = useApp();
   const role = currentUser?.role;
   const depts = getDepts();
+  const deptOptions = getDeptOptions();
   const codes = useMemo(() => managerDeptCodes(currentUser, depts, getEmailMaster()), [currentUser, depts, getEmailMaster]);
 
   useEffect(() => {
@@ -257,7 +258,7 @@ export default function Media() {
               <div><label className="form-label">File Name</label><input value={editItem.file_name || ''} onChange={e => setEditItem(p => ({ ...p, file_name: e.target.value }))} /></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="form-label">Category</label><select value={editItem.category || ''} onChange={e => setEditItem(p => ({ ...p, category: e.target.value }))}>{EDIT_CATS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                <div><label className="form-label">Department</label><select value={editItem.dept || ''} onChange={e => setEditItem(p => ({ ...p, dept: e.target.value }))}><option value="">All</option>{depts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
+                <div><label className="form-label">Department</label><select value={editItem.dept || ''} onChange={e => setEditItem(p => ({ ...p, dept: e.target.value }))}><option value="">All</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
               </div>
               <div><label className="form-label">Linked Audit/NC</label><input value={editItem.related_id || ''} onChange={e => setEditItem(p => ({ ...p, related_id: e.target.value }))} /></div>
               <div><label className="form-label">Tags</label><input value={editItem.tags || ''} onChange={e => setEditItem(p => ({ ...p, tags: e.target.value }))} placeholder="Critical NC, CAPA, Approved" /></div>

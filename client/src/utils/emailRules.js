@@ -4,21 +4,23 @@
 
 export const EMAIL_RULES_DEFAULTS = {
   enabled: true,
-  windowDays: 2,
+  firstReminderDays: 1,
+  repeatDays: 7,
+  hodAfterDays: 7,
+  managementAfterDays: 15,
   ccManager: true,
   ccHod: true,
   ccGlobal: true,
   types: { upcoming_reminder: true, delayed: true, escalation: true },
-  frequencies: { upcoming_reminder: 365, delayed: 1, escalation_2: 2, escalation_3: 30 },
   suppressed: [],
   depts: {},
 };
 
-// The three switchable email types. `escalation` covers both escalation levels.
+// The three switchable reminder kinds. All of them arrive in the department's one conversation.
 export const EMAIL_TYPES = [
-  { key: 'upcoming_reminder', label: 'Upcoming Reminder', desc: 'Sent once when the target date is 0-2 days away', to: 'SPOC' },
-  { key: 'delayed', label: 'Delayed NC', desc: 'Sent on delay days 0, 3 and 6', to: 'SPOC' },
-  { key: 'escalation', label: 'Escalation', desc: 'Overdue 7d+ goes to the HOD; 15d+ adds Management', to: 'HOD' },
+  { key: 'upcoming_reminder', label: 'First reminder', desc: 'One day before the target date (not yet late)', to: 'SPOC' },
+  { key: 'delayed', label: 'Overdue reminder', desc: 'Weekly while the NC is late, until it is 7 days overdue', to: 'SPOC' },
+  { key: 'escalation', label: 'Escalation', desc: 'Weekly: 7+ days overdue goes to the HOD; 15+ days to Management', to: 'HOD' },
 ];
 
 export function mergeEmailRules(stored) {
@@ -27,7 +29,6 @@ export function mergeEmailRules(stored) {
     ...EMAIL_RULES_DEFAULTS,
     ...s,
     types: { ...EMAIL_RULES_DEFAULTS.types, ...(s.types || {}) },
-    frequencies: { ...EMAIL_RULES_DEFAULTS.frequencies, ...(s.frequencies || {}) },
     suppressed: Array.isArray(s.suppressed) ? s.suppressed : [],
     depts: s.depts && typeof s.depts === 'object' ? s.depts : {},
   };

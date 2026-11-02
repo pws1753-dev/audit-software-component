@@ -4,9 +4,9 @@ import { Card, Badge, Icon } from '../components/UI';
 import { SEV_BADGE, SEV_LABEL, showToast } from '../utils/helpers';
 
 export default function Learnings() {
-  const { getLearnings, getDepts, writeSyncKey, currentUser, setPageAction } = useApp();
+  const { getLearnings, getDeptOptions, writeSyncKey, currentUser, setPageAction } = useApp();
   const learnings = getLearnings();
-  const depts = getDepts();
+  const deptOptions = getDeptOptions();
   const role = currentUser?.role;
 
   const [search, setSearch] = useState('');
@@ -73,7 +73,7 @@ export default function Learnings() {
         <div className="flex flex-col gap-2">
           <div><label className="form-label">Title *</label><input ref={titleInputRef} placeholder="Learning title..." value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} /></div>
           <div className="grid grid-cols-2 gap-2">
-            <div><label className="form-label">Dept</label><select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}><option value="">All</option>{depts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
+            <div><label className="form-label">Dept</label><select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}><option value="">All</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
             <div><label className="form-label">Severity</label><select value={form.sev} onChange={e => setForm(p => ({ ...p, sev: e.target.value }))}><option value="critical">Critical</option><option value="major">Major</option><option value="minor">Minor</option><option value="obs">Observation</option></select></div>
           </div>
           <div><label className="form-label">Clause</label><input placeholder="§8.5.2" value={form.clause} onChange={e => setForm(p => ({ ...p, clause: e.target.value }))} /></div>

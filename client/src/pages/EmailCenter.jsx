@@ -309,36 +309,28 @@ export default function EmailCenter() {
           </Card>
 
           <Card title="Timing">
-            <div className="mb-3">
-              <label className="form-label">Remind this many days before the target date</label>
-              <input
-                type="number" min={0} max={2}
-                value={rules.windowDays}
-                onChange={e => patch({ windowDays: Math.max(0, Math.min(2, Number(e.target.value) || 0)) })}
-              />
-              <div className="text-[10px] mt-1" style={{ color: 'var(--text3)' }}>
-                Upcoming reminders start {rules.windowDays} day(s) before an NC is due.
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="form-label">First reminder: days before the target date</label>
+                <input type="number" min={0} max={14} value={rules.firstReminderDays} onChange={e => patch({ firstReminderDays: Math.max(0, Math.min(14, Number(e.target.value) || 0)) })} />
+              </div>
+              <div>
+                <label className="form-label">Then repeat every (days)</label>
+                <input type="number" min={1} max={30} value={rules.repeatDays} onChange={e => patch({ repeatDays: Math.max(1, Math.min(30, Number(e.target.value) || 1)) })} />
+              </div>
+              <div>
+                <label className="form-label">Escalate to the HOD after (days overdue)</label>
+                <input type="number" min={1} max={60} value={rules.hodAfterDays} onChange={e => patch({ hodAfterDays: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })} />
+              </div>
+              <div>
+                <label className="form-label">Escalate to Management after (days overdue)</label>
+                <input type="number" min={1} max={120} value={rules.managementAfterDays} onChange={e => patch({ managementAfterDays: Math.max(1, Math.min(120, Number(e.target.value) || 1)) })} />
               </div>
             </div>
-            <div className="card-heading mt-2"><span className="dot w-[7px] h-[7px] rounded-full bg-[var(--teal)] flex-shrink-0" />How often to repeat</div>
-            {[
-              ['upcoming_reminder', 'Upcoming Reminder'],
-              ['delayed', 'Delayed NC'],
-              ['escalation_2', 'Escalation → HOD (overdue 7d+, until closed)'],
-              ['escalation_3', 'Escalation → Management (overdue 15d+)'],
-            ].map(([key, label]) => (
-              <div key={key} className="flex items-center gap-2 py-1">
-                <div className="flex-1 text-[11px]">{label}</div>
-                <input
-                  type="number" min={1} max={365} style={{ width: 70 }}
-                  value={rules.frequencies[key]}
-                  onChange={e => patch({ frequencies: { ...rules.frequencies, [key]: Math.max(1, Math.min(365, Number(e.target.value) || 1)) } })}
-                />
-                <div className="text-[10px]" style={{ color: 'var(--text3)', width: 60 }}>day(s)</div>
-              </div>
-            ))}
-            <div className="text-[10px] mt-2" style={{ color: 'var(--text3)' }}>
-              A department will not receive the same kind of email again until its interval has elapsed.
+            <div className="text-[10px]" style={{ color: 'var(--text3)', lineHeight: 1.6 }}>
+              Each NC is reminded {rules.firstReminderDays} day(s) before its target date, then every {rules.repeatDays} day(s) until it is closed or sent for review.
+              All reminders of a department, including escalations and the audit report mail, arrive as <strong>one continuous email conversation</strong>.
+              Every email shows the reminder number and the days delayed of each NC.
             </div>
           </Card>
 
@@ -349,10 +341,10 @@ export default function EmailCenter() {
                 <span style={{ color: 'var(--text3)' }}>Runs at</span><strong>09:00 daily (Asia/Kolkata)</strong>
               </div>
               <div className="flex justify-between py-1" style={{ borderBottom: '1px solid var(--border2)' }}>
-                <span style={{ color: 'var(--text3)' }}>Grouping</span><strong>One email per department, per type</strong>
+                <span style={{ color: 'var(--text3)' }}>Grouping</span><strong>One email per department, in one conversation</strong>
               </div>
               <div className="flex justify-between py-1">
-                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (from 7d) → + Management (from 15d)</strong>
+                <span style={{ color: 'var(--text3)' }}>Escalation path</span><strong>SPOC → HOD (from {rules.hodAfterDays}d) → Management (from {rules.managementAfterDays}d)</strong>
               </div>
               <p className="mt-3 text-[10px]" style={{ color: 'var(--text3)' }}>
                 The schedule itself is set by <code>EMAIL_CRON</code> on the server. Use <strong>Preview</strong> above to see
@@ -430,6 +422,9 @@ export default function EmailCenter() {
                       <strong className="text-[11px]">{r.deptName || r.dept}</strong>
                       <Badge type={STATUS_BADGE[r.status] || 'b-gray'}>{r.status}</Badge>
                       <span className="text-[10px]" style={{ color: 'var(--text3)' }}>{r.ncCount} NC</span>
+                      {r.reminderNo ? <Badge type="b-blue">Reminder #{r.reminderNo}</Badge> : null}
+                      {r.maxDelay > 0 ? <Badge type="b-red">{r.maxDelay} days delayed</Badge> : null}
+                      {r.position > 1 ? <span className="text-[10px]" style={{ color: 'var(--text3)' }}>message {r.position} of this conversation</span> : null}
                     </div>
                     {r.reason || r.error ? (
                       <div className="text-[10px]" style={{ color: r.status === 'failed' ? 'var(--red)' : 'var(--text3)' }}>{r.reason || r.error}</div>

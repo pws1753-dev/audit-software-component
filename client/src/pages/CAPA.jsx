@@ -21,7 +21,7 @@ function capaSortRank(f) {
 }
 
 export default function CAPA({ dateFrom, dateTo }) {
-  const { getFindings, getDepts, getEmailMaster, getSystemSettings, writeSyncKey, currentUser, capaSelectedId, setCapaSelectedId, setPageAction } = useApp();
+  const { getFindings, getDepts, getDeptOptions, getEmailMaster, getSystemSettings, writeSyncKey, currentUser, capaSelectedId, setCapaSelectedId, setPageAction } = useApp();
   const findings = getFindings();
   const depts = getDepts();
   const role = currentUser?.role;
@@ -167,9 +167,10 @@ export default function CAPA({ dateFrom, dateTo }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const allDeptOptions = getDeptOptions();
   const deptOptions = role === 'spoc'
-    ? depts.filter(d => deptValuesMatch(depts, d.code, currentUser?.dept) || deptValuesMatch(depts, d.name, currentUser?.dept))
-    : role === 'manager' ? depts.filter(d => deptCodeInList(depts, d.code, codes)) : depts;
+    ? allDeptOptions.filter(d => deptValuesMatch(depts, d.code, currentUser?.dept) || deptValuesMatch(depts, d.name, currentUser?.dept))
+    : role === 'manager' ? allDeptOptions.filter(d => deptCodeInList(depts, d.code, codes)) : allDeptOptions;
 
   const renderDetail = (f) => {
     const ws = findingWorkflowStatus(f);

@@ -7,9 +7,10 @@ import { managerDeptCodes, filterFindingsByDateRange, normalizeAuditSeverity, fi
 const PAGE_SIZE = 15;
 
 export default function Findings({ dateFrom, dateTo }) {
-  const { getFindings, getDepts, getEmailMaster, getSystemSettings, writeSyncKey, currentUser, findingsDeptFilter, setFindingsDeptFilter, navigate, setCapaSelectedId, setPageAction } = useApp();
+  const { getFindings, getDepts, getDeptOptions, getEmailMaster, getSystemSettings, writeSyncKey, currentUser, findingsDeptFilter, setFindingsDeptFilter, navigate, setCapaSelectedId, setPageAction } = useApp();
   const findings = getFindings();
   const depts = getDepts();
+  const deptOptions = getDeptOptions();
   const role = currentUser?.role;
   const settings = getSystemSettings();
   const codes = useMemo(() => managerDeptCodes(currentUser, depts, getEmailMaster()), [currentUser, depts, getEmailMaster]);
@@ -92,7 +93,7 @@ export default function Findings({ dateFrom, dateTo }) {
         <div className="flex gap-2 flex-wrap items-end">
           <div className="flex flex-col gap-[3px]"><label className="form-label">Search</label><input placeholder="Any field..." style={{ minWidth: 160 }} value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} /></div>
           <div className="flex flex-col gap-[3px]"><label className="form-label">Dept</label>
-            <select value={filterDept} onChange={e => { setFilterDept(e.target.value); setPage(1); }} style={{ minWidth: 120 }}><option value="">All</option>{depts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select>
+            <select value={filterDept} onChange={e => { setFilterDept(e.target.value); setPage(1); }} style={{ minWidth: 120 }}><option value="">All</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select>
           </div>
           <div className="flex flex-col gap-[3px]"><label className="form-label">Severity</label>
             <select value={filterSev} onChange={e => { setFilterSev(e.target.value); setPage(1); }} style={{ minWidth: 110 }}><option value="">All</option>{['critical', 'major', 'minor', 'obs'].map(s => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select>
@@ -158,7 +159,7 @@ export default function Findings({ dateFrom, dateTo }) {
               <div><label className="form-label">Finding No.</label><input value={editItem.ref || ''} onChange={e => setEditItem(p => ({ ...p, ref: e.target.value }))} /></div>
               <div><label className="form-label">Dept</label>
                 <select value={editItem.dept || ''} onChange={e => setEditItem(p => ({ ...p, dept: e.target.value, deptName: depts.find(d => d.code === e.target.value)?.name || e.target.value }))}>
-                  <option value="">Select</option>{depts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}
+                  <option value="">Select</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}
                 </select>
               </div>
             </div>

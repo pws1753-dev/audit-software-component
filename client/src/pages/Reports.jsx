@@ -24,9 +24,10 @@ function auditDateText(audit) {
 }
 
 export default function Reports({ dateFrom, dateTo }) {
-  const { getFindings, getDepts, getCompletedAudits, getCheckpoints, currentUser, setPageAction } = useApp();
+  const { getFindings, getDepts, getDeptOptions, getCompletedAudits, getCheckpoints, currentUser, setPageAction } = useApp();
   const allFindings = getFindings();
   const depts = getDepts();
+  const deptOptions = getDeptOptions();
   const completed = getCompletedAudits();
   const checkpoints = getCheckpoints();
 
@@ -172,7 +173,7 @@ export default function Reports({ dateFrom, dateTo }) {
           {!isSpoc && (
             <span className={`badge ${deptFilters.length === 0 ? 'b-brand' : 'b-gray'}`} style={{ cursor: 'pointer', padding: '5px 10px', fontSize: 11 }} onClick={() => setDeptFilters([])}>All Depts</span>
           )}
-          {(isSpoc ? depts.filter(d => deptValuesMatch(depts, d.code, currentUser?.dept) || deptValuesMatch(depts, d.name, currentUser?.dept)) : depts).map(d => {
+          {(isSpoc ? deptOptions.filter(d => deptValuesMatch(depts, d.code, currentUser?.dept) || deptValuesMatch(depts, d.name, currentUser?.dept)) : deptOptions).map(d => {
             const selectedDept = deptFilters.some(code => deptValuesMatch(depts, code, d.code));
             const hasData = reportDeptHasData(d);
             return <span key={d.code} title={hasData ? '' : 'No report data for the current status filter'} className={`badge ${selectedDept ? 'b-brand' : 'b-gray'}`} style={{ cursor: 'pointer', padding: '5px 10px', fontSize: 11, opacity: hasData ? 1 : 0.45 }} onClick={() => toggleDept(d.code)}>{d.code}</span>;

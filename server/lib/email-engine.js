@@ -6,29 +6,35 @@
 // reminder goes out whether or not anyone has the portal open. Every automatic email CCs the
 // department's Manager and HOD/BUH from the Email Master, plus the global CC list.
 //
-// Escalation policy mirrors the matrix the CAPA page already advertises to users:
-//   due/overdue 0-6d Delayed NC -> SPOC              on delay days 0, 3 and 6
-//   overdue 7d+    Escalation   -> HOD (SPOC in CC)  every 2 days, until the NC is closed
-//   overdue 15d+   Escalation   -> Management        every 30 days (in addition to the HOD mails)
-//   due within 0-2d Upcoming    -> SPOC              once per target date
+// Reminder policy (all of it in ONE continuous email conversation per department):
+//   first reminder   `firstReminderDays` (default 1) day(s) before an NC's target date
+//   then             every `repeatDays` (default 7) days until the NC is closed or sent for review
+//   recipient level  NC overdue < hodAfterDays (7)        -> SPOC, Manager / HOD in CC
+//                    NC overdue >= hodAfterDays           -> HOD, SPOC / Manager in CC
+//                    NC overdue >= managementAfterDays (15) -> Management, HOD / Manager / SPOC in CC
+//   Each email shows the reminder number and the days delayed of every NC, and lists the earlier
+//   messages of the conversation. One email per department per run, never one per NC or per level.
 //
 // Besides sending and logging, each run flips overdue NCs to 'delayed' (see below).
 
 const { getCollection } = require('./mongo');
 const { getMailer, SMTP_FROM } = require('./mailer');
 const { mergeEmailLogs } = require('./sync-helpers');
-const { claimEmailLock, commitEmailLock, emailSendLockKey } = require('./email-locks');
-const { buildNcTable: renderNcTable, buildSummary, pickTemplate, renderEmail } = require('./email-render');
+const { claimEmailLock, commitEmailLock, releaseEmailLock, emailSendLockKey } = require('./email-locks');
+const { ncKey, loadNcStates, saveNcStates, nextMessage, recordMessage } = require('./email-thread');
+const { buildNcTable: renderNcTable, buildSummary, buildHistory, pickTemplate, renderEmail } = require('./email-render');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TZ = process.env.EMAIL_CRON_TZ || 'Asia/Kolkata';
-const DEFAULT_WINDOW_DAYS = Number(process.env.EMAIL_REMINDER_WINDOW_DAYS || 2);
 
 // Defaults for ap_email_rules — the config the Email Center writes. Mirrored in
 // client/src/utils/emailRules.js; keep the two in step.
 const EMAIL_RULES_DEFAULTS = {
   enabled: true,
-  windowDays: DEFAULT_WINDOW_DAYS,
+  firstReminderDays: 1,
+  repeatDays: 7,
+  hodAfterDays: 7,
+  managementAfterDays: 15,
   ccManager: true,
   ccHod: true,
   ccGlobal: true,
@@ -40,6 +46,7 @@ const EMAIL_RULES_DEFAULTS = {
 
 const READ_KEYS = ['ap_finds', 'ap_depts', 'ap_users', 'ap_auds', 'ap_completed_audits', 'ap_email_master', 'ap_email_templates', 'ap_required_cc_emails', 'ap_system_settings', 'ap_email_rules'];
 
+const clampInt = (v, d, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d; };
 function mergeRules(stored) {
   const s = stored && typeof stored === 'object' ? stored : {};
   return {
@@ -49,13 +56,13 @@ function mergeRules(stored) {
     frequencies: { ...EMAIL_RULES_DEFAULTS.frequencies, ...(s.frequencies || {}) },
     suppressed: Array.isArray(s.suppressed) ? s.suppressed : [],
     depts: s.depts && typeof s.depts === 'object' ? s.depts : {},
+    firstReminderDays: clampInt(s.firstReminderDays, EMAIL_RULES_DEFAULTS.firstReminderDays, 0, 14),
+    repeatDays: clampInt(s.repeatDays, EMAIL_RULES_DEFAULTS.repeatDays, 1, 30),
+    hodAfterDays: clampInt(s.hodAfterDays, EMAIL_RULES_DEFAULTS.hodAfterDays, 1, 60),
+    managementAfterDays: clampInt(s.managementAfterDays, EMAIL_RULES_DEFAULTS.managementAfterDays, 1, 120),
   };
 }
 
-// Both escalation levels are governed by the single "escalation" switch in the UI.
-function typeSwitchKey(bucket) {
-  return bucket.startsWith('escalation') ? 'escalation' : bucket;
-}
 
 // ── DATES ────────────────────────────────────────────
 // Findings store `due` as a plain YYYY-MM-DD with no timezone. The server may well run in UTC
@@ -87,30 +94,6 @@ function isActionable(f) {
   const ws = workflowStatus(f);
   // 'pending-closure' sits with the reviewer, not the SPOC — nagging the SPOC there is noise.
   return ws !== 'closed' && ws !== 'pending-closure';
-}
-
-function classifyAll(f, todayMs, windowDays) {
-  const dueMs = ymdToMs(f.due);
-  if (!Number.isFinite(dueMs)) return [];
-  const overdue = Math.round((todayMs - dueMs) / DAY_MS);
-  // An NC keeps nagging the department's HOD (level 2) for as long as it stays overdue; past 15
-  // days management is additionally told (level 3). Previously level 3 *replaced* level 2, so a
-  // department whose NCs were all 15+ days late went silent for a whole month between mails.
-  if (overdue >= 15) return [{ type: 'escalation', level: 3, overdue }, { type: 'escalation', level: 2, overdue }];
-  if (overdue >= 7) return [{ type: 'escalation', level: 2, overdue }];
-  const hits = [];
-  if ([0, 3, 6].includes(overdue)) hits.push({ type: 'delayed', level: 1, overdue });
-  const until = -overdue;
-  if (until >= 0 && until <= Math.min(2, windowDays)) hits.push({ type: 'upcoming_reminder', level: 0, overdue: 0, until });
-  return hits;
-}
-
-function classify(f, todayMs, windowDays) {
-  return classifyAll(f, todayMs, windowDays)[0] || null;
-}
-
-function bucketOf(hit) {
-  return hit.type === 'escalation' ? `escalation_${hit.level}` : hit.type;
 }
 
 // ── RECIPIENTS ───────────────────────────────────────
@@ -191,8 +174,7 @@ function recipientsFor(bucket, master, globalCc, rules = EMAIL_RULES_DEFAULTS, d
 function templateFor(templates, bucket) {
   return pickTemplate(templates, bucket.startsWith('escalation') ? 'escalation' : bucket);
 }
-const buildNcTable = rows => renderNcTable(rows, workflowStatus);
-const typeOfBucket = bucket => (bucket.startsWith('escalation') ? 'escalation' : bucket);
+const buildNcTable = (rows, opts) => renderNcTable(rows, workflowStatus, opts);
 
 // ── STORE ────────────────────────────────────────────
 async function readKeys(collection) {
@@ -214,6 +196,81 @@ async function appendEmailLogs(collection, logs, by) {
 }
 
 // ── ENGINE ───────────────────────────────────────────
+// ── REMINDER PLAN (pure, unit-testable) ──────────────
+const LEVEL_BUCKET = ['upcoming_reminder', 'delayed', 'escalation_2', 'escalation_3'];
+const LEVEL_TYPE_KEY = ['upcoming_reminder', 'delayed', 'escalation', 'escalation'];
+const LEVEL_ACCENT = ['#2563eb', '#d97706', '#c0392b', '#c0392b'];
+
+function levelFor(overdue, rules) {
+  return overdue >= rules.managementAfterDays ? 3 : overdue >= rules.hodAfterDays ? 2 : overdue >= 1 ? 1 : 0;
+}
+
+// Is this NC due a reminder today, and how late is it? `state` = { count, lastDay } from the NC's history.
+// Returns null when nothing is due.
+function reminderPlan(f, state, todayMs, rules) {
+  const dueMs = ymdToMs(f && f.due);
+  if (!Number.isFinite(dueMs)) return null;
+  const daysToDue = Math.round((dueMs - todayMs) / DAY_MS);
+  const overdue = Math.max(0, -daysToDue);
+  const count = (state && Number(state.count)) || 0;
+  let due;
+  if (count === 0) {
+    due = daysToDue <= rules.firstReminderDays;           // first one, shortly before the target date
+  } else {
+    const last = ymdToMs(state.lastDay);
+    due = !Number.isFinite(last) || Math.round((todayMs - last) / DAY_MS) >= rules.repeatDays;
+  }
+  return due ? { level: levelFor(overdue, rules), overdue, daysToDue, count: count + 1 } : null;
+}
+
+const fmtDay = ms => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(ms));
+
+// Template values for a reminder email. rows: [{ f, hit: { overdue, daysToDue, reminder } }]
+function reminderVars({ rows, level, deptName, master, rules, todayMs }) {
+  const reminderNo = Math.max(...rows.map(r => r.hit.reminder));
+  const maxDelay = Math.max(...rows.map(r => r.hit.overdue));
+  const worst = rows.reduce((a, b) => (b.hit.overdue > a.hit.overdue ? b : a), rows[0]);
+  const upcoming = rows.map(r => r.hit.daysToDue).filter(d => d >= 0);
+  const minDue = upcoming.length ? Math.min(...upcoming) : 0;
+  const spoc = (master && master.spocName) || deptName;
+  const vars = {
+    department_name: deptName, spoc_name: spoc,
+    recipient_name: level >= 3 ? 'Management Team' : level === 2 ? `Head of Department, ${deptName}` : spoc,
+    nc_count: rows.length, nc_table: buildNcTable(rows),
+    nc_number: worst.f.ref || '', target_date: worst.f.due || '', delay_days: maxDelay, max_days_delayed: maxDelay,
+    clause_name: worst.f.clause || '', clause_description: worst.f.desc || '',
+    window_days: rules.firstReminderDays, repeat_days: rules.repeatDays, reminder_count: reminderNo,
+    due_phrase: minDue === 0 ? 'today' : minDue === 1 ? 'tomorrow' : `in ${minDue} days`,
+    escalation_level: level >= 2 ? String(level) : '',
+    escalation_label: level >= 3 ? 'Management review' : level === 2 ? 'Head of Department review' : '',
+    audit_name: worst.f.auditRef || '',
+  };
+  vars.summary = buildSummary([
+    ['Reminder', `#${reminderNo}`],
+    ['NCs in this reminder', String(rows.length)],
+    maxDelay > 0 ? ['Days delayed (max)', `${maxDelay} day${maxDelay === 1 ? '' : 's'}`] : ['Target date', minDue === 0 ? 'Today' : minDue === 1 ? 'Tomorrow' : `In ${minDue} days`],
+    ['Next reminder', fmtDay(todayMs + rules.repeatDays * DAY_MS)],
+  ], LEVEL_ACCENT[level]);
+  return { vars, reminderNo, maxDelay };
+}
+
+// Only one process writes to a department's conversation at a time (a cron run and a manual send
+// could otherwise both take the same message number). Short claim, released straight away.
+const lockThread = (collection, dept, by) => claimEmailLock(collection, `thread-send:${dept}`, 1, { bucket: 'thread', deptCode: dept }, by);
+const unlockThread = (collection, dept) => releaseEmailLock(collection, `thread-send:${dept}`).catch(() => {});
+
+// Sends the next message of a department's conversation and records it.
+async function sendThreaded(collection, { dept, deptName, to, cc, tpl, tplType, vars, entry, dryRun }) {
+  const msg = await nextMessage(collection, { dept, deptName, from: SMTP_FROM });
+  vars.history = buildHistory(msg.history);
+  const mail = renderEmail(tpl, tplType, vars, { subject: msg.subject });
+  if (dryRun) return { subject: mail.subject, html: mail.html, position: msg.n };
+  await getMailer().sendMail({ from: SMTP_FROM, to, cc, subject: mail.subject, html: mail.html, text: mail.text, ...msg.headers });
+  await recordMessage(collection, { dept, msg, entry });
+  return { subject: mail.subject, html: mail.html, position: msg.n };
+}
+
+// ── ENGINE ────────────────────────────────────────────
 async function runEmailAutomation(options = {}) {
   const by = String(options.by || 'cron');
   const dryRun = Boolean(options.dryRun);
@@ -221,9 +278,8 @@ async function runEmailAutomation(options = {}) {
 
   const collection = await getCollection();
   const data = await readKeys(collection);
-
-  const settings = data.ap_system_settings && typeof data.ap_system_settings === 'object' ? data.ap_system_settings : {};
-  const rules = mergeRules(data.ap_email_rules);
+  const ctx = emailContext(data);
+  const { settings, rules, depts, emailMaster, templates } = ctx;
 
   // Two independent kill switches: the long-standing system setting, and the Email Center's own.
   if (settings.emailNotifications === false) {
@@ -234,19 +290,10 @@ async function runEmailAutomation(options = {}) {
   }
 
   let findings = Array.isArray(data.ap_finds) ? data.ap_finds : [];
-  const emailMaster = Array.isArray(data.ap_email_master) ? data.ap_email_master : [];
-  const templates = Array.isArray(data.ap_email_templates) ? data.ap_email_templates : [];
-  const depts = Array.isArray(data.ap_depts) ? data.ap_depts : [];
-  const users = Array.isArray(data.ap_users) ? data.ap_users.filter(user => user && user.active !== false && user.email) : [];
-  const auditors = Array.isArray(data.ap_auds) ? data.ap_auds : [];
   const completedAudits = (Array.isArray(data.ap_completed_audits) ? data.ap_completed_audits : []).filter(audit => audit && !audit.deletedAt);
-  const globalCc = dedupe(splitEmails((Array.isArray(data.ap_required_cc_emails) ? data.ap_required_cc_emails : []).join(',')));
-  const windowDays = Math.max(0, Number(rules.windowDays != null ? rules.windowDays : settings.reminderWindowDays || DEFAULT_WINDOW_DAYS));
   const autoEscalation = settings.autoEscalation !== false;
-  const suppressed = new Set(splitEmails((rules.suppressed || []).join(',')).map(e => e.toLowerCase()));
-  const stripSuppressed = list => list.filter(e => !suppressed.has(e.toLowerCase()));
-
-  const todayMs = ymdToMs(todayYmd(tz));
+  const todayStr = options.today || todayYmd(tz);
+  const todayMs = ymdToMs(todayStr);
 
   // Keep workflow status aligned with the source portal: the due date itself remains
   // actionable without being marked delayed; status flips only after the date is missed.
@@ -272,13 +319,13 @@ async function runEmailAutomation(options = {}) {
     }
   }
 
-  // Group actionable findings by department + bucket: one email per dept per bucket, not per NC.
+  // Which NCs are due a reminder today, grouped by department.
+  const ncStates = await loadNcStates(collection);
   const groups = new Map();
   const muted = [];
   findings.filter(isActionable).forEach(f => {
-    classifyAll(f, todayMs, windowDays).forEach(hit => {
-    const bucket = bucketOf(hit);
-    if (!autoEscalation && bucket.startsWith('escalation')) return;
+    const plan = reminderPlan(f, ncStates.get(ncKey(f.id || f.ref)), todayMs, rules);
+    if (!plan) return;
     const findingDept = f.dept || f.deptName || '';
     const deptRecord = depts.find(d => deptMatches(depts, d.code, findingDept) || deptMatches(depts, d.name, findingDept));
     const deptCode = String((deptRecord && deptRecord.code) || findingDept).trim();
@@ -286,15 +333,17 @@ async function runEmailAutomation(options = {}) {
 
     // "kisko send karna hai, kisko nahi" — the Email Center's per-type and per-department switches.
     const deptRule = rules.depts[deptCode] || {};
-    const typeKey = typeSwitchKey(bucket);
+    let level = plan.level;
+    // With escalation switched off an overdue NC is still reminded, but only at the SPOC level.
+    if (level >= 2 && (!autoEscalation || rules.types.escalation === false || (deptRule.types && deptRule.types.escalation === false))) level = 1;
+    const typeKey = LEVEL_TYPE_KEY[level];
+    const bucket = LEVEL_BUCKET[level];
     if (rules.types[typeKey] === false) { muted.push({ bucket, deptCode, reason: `${typeKey} emails are switched off for everyone` }); return; }
     if (deptRule.enabled === false) { muted.push({ bucket, deptCode, reason: `${deptCode} is switched off in the Email Center` }); return; }
     if (deptRule.types && deptRule.types[typeKey] === false) { muted.push({ bucket, deptCode, reason: `${typeKey} is switched off for ${deptCode}` }); return; }
 
-    const gk = `${bucket}|${deptCode}`;
-    if (!groups.has(gk)) groups.set(gk, { bucket, deptCode, rows: [] });
-    groups.get(gk).rows.push({ f, hit });
-    });
+    if (!groups.has(deptCode)) groups.set(deptCode, { deptCode, rows: [] });
+    groups.get(deptCode).rows.push({ f, plan: { ...plan, level } });
   });
 
   const results = [];
@@ -302,124 +351,67 @@ async function runEmailAutomation(options = {}) {
   let sent = 0, failed = 0, skipped = 0;
 
   const processGroup = async (group) => {
-    const { bucket, deptCode, rows } = group;
+    const { deptCode, rows } = group;
+    const maxLevel = Math.max(...rows.map(r => r.plan.level));
+    const bucket = LEVEL_BUCKET[maxLevel];
     // One department's failure (lock store hiccup, bad data) must not abort the departments after it.
     try {
-    const matchingMasterRecords = emailMaster.filter(m => deptMatches(depts, m.deptCode, deptCode) || deptMatches(depts, m.department, deptCode));
-    const master = matchingMasterRecords.find(m => String(m.status || 'active').toLowerCase() !== 'inactive') || null;
-    const masterRecord = master || matchingMasterRecords[0] || null;
-    const dept = depts.find(d => deptMatches(depts, d.code, deptCode));
-    const deptName = (masterRecord && masterRecord.department) || (dept && dept.name) || deptCode;
-    let sendRows = rows;
-    let refs = sendRows.map(r => r.f.ref).filter(Boolean).sort();
+      const matching = emailMaster.filter(m => deptMatches(depts, m.deptCode, deptCode) || deptMatches(depts, m.department, deptCode));
+      const master = matching.find(m => String(m.status || 'active').toLowerCase() !== 'inactive') || null;
+      const dept = depts.find(d => deptMatches(depts, d.code, deptCode));
+      const deptName = ((matching[0] && matching[0].department) || (dept && dept.name) || deptCode);
+      const view = rows
+        .slice().sort((a, b) => b.plan.overdue - a.plan.overdue || String(a.f.ref).localeCompare(String(b.f.ref)))
+        .map(r => ({ f: r.f, hit: { overdue: r.plan.overdue, daysToDue: r.plan.daysToDue, reminder: r.plan.count } }));
+      const built = reminderVars({ rows: view, level: maxLevel, deptName, master, rules, todayMs });
+      const base = { bucket, dept: deptCode, deptName, ncCount: rows.length, reminderNo: built.reminderNo, maxDelay: built.maxDelay };
 
-    if (matchingMasterRecords.length && !master) {
-      skipped++;
-      results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'skipped', reason: `email record for ${deptCode} is deactivated` });
-      return;
-    }
-
-    const tpl = templateFor(templates, bucket);
-    if (!tpl) {
-      skipped++;
-      results.push({ bucket, dept: deptCode, ncCount: rows.length, status: 'skipped', reason: `no active template for "${bucket}"` });
-      return;
-    }
-
-    const deptRule = rules.depts[deptCode] || {};
-    const deptUsers = users.filter(user => deptMatches(depts, user.dept, deptCode));
-    const deptAudits = completedAudits.filter(audit => deptMatches(depts, audit.dept || audit.deptName || audit.department, deptCode));
-    const latestAudit = deptAudits.slice().sort((a, b) => Date.parse(a.submittedAt || a.date || 0) - Date.parse(b.submittedAt || b.date || 0)).pop() || {};
-    const auditorEmails = dedupe([
-      ...auditors.filter(auditor => auditor && auditor.email && latestAudit.auditor && auditor.name === latestAudit.auditor).flatMap(auditor => splitEmails(auditor.email)),
-      ...users.filter(user => user.role === 'auditor' && (!latestAudit.auditor || user.name === latestAudit.auditor || user.loginId === latestAudit.auditor)).flatMap(user => splitEmails(user.email)),
-    ]);
-    const requiredCc = dedupe([...auditorEmails, ...users.filter(user => user.role === 'admin').flatMap(user => splitEmails(user.email))]);
-    const resolvedMaster = {
-      ...(master || {}),
-      email: dedupe([...splitEmails(master && master.email), ...deptUsers.filter(user => user.role === 'spoc').flatMap(user => splitEmails(user.email))]).join(', '),
-      reportingEmail: dedupe([...splitEmails(master && master.reportingEmail), ...deptUsers.filter(user => user.role === 'manager').flatMap(user => splitEmails(user.email))]).join(', '),
-      managementEmail: dedupe([...splitEmails(master && master.managementEmail), ...users.filter(user => user.role === 'admin' || user.role === 'viewer').flatMap(user => splitEmails(user.email))]).join(', '),
-    };
-    const resolved = recipientsFor(bucket, resolvedMaster, globalCc, rules, deptRule, requiredCc);
-    const to = stripSuppressed(resolved.to);
-    // Findings imported from an external audit carry their own responsible owner; keep that
-    // person in the loop (CC) alongside the department chain.
-    const ownerCc = dedupe(rows.flatMap(r => splitEmails(r.f.ownerEmail)));
-    const cc = stripSuppressed(withoutAll(dedupe([...resolved.cc, ...ownerCc]), resolved.to));
-    if (!to.length) {
-      // Surface the gap instead of dropping silently — a missing SPOC address in the Email
-      // Master is exactly how a department stops receiving reminders without anyone noticing.
-      skipped++;
-      const reason = !master
-        ? `dept ${deptCode} is not in the Email Master`
-        : resolved.to.length
-          ? `every recipient for dept ${deptCode} is on the suppression list`
-          : `no usable email addresses for dept ${deptCode}`;
-      results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'skipped', reason });
-      logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptName} — ${rows.length} NC(s)`, status: 'skipped', error: reason, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
-      return;
-    }
-
-    const frequencyDays = bucket === 'upcoming_reminder' ? 365 : (Number(rules.frequencies[bucket]) || 1);
-    const lockRows = [];
-    if (!dryRun) {
-      // Claims are independent per finding, so run them together: a department with 20 NCs
-      // would otherwise cost 20 sequential round trips, and the Vercel function has a 60s budget.
-      const claims = await Promise.all(rows.map(async row => {
-        const findingKey = String(row.f.id || row.f.ref || '').trim();
-        const dueKey = bucket === 'upcoming_reminder' ? `:${row.f.due || ''}` : '';
-        const lockKey = `auto:${bucket}:${deptCode}:${findingKey}${dueKey}`;
-        const granted = await claimEmailLock(collection, lockKey, frequencyDays, { bucket, deptCode, refs: [row.f.ref].filter(Boolean) }, by);
-        return granted ? { row, lockKey } : null;
-      }));
-      claims.forEach(item => { if (item) lockRows.push(item); });
-      if (!lockRows.length) {
-        skipped++;
-        results.push({ bucket, dept: deptCode, deptName, ncCount: rows.length, status: 'throttled', reason: `all findings were already sent within the last ${frequencyDays} day(s)` });
+      if (matching.length && !master) {
+        skipped++; results.push({ ...base, status: 'skipped', reason: `email record for ${deptCode} is deactivated` });
         return;
       }
-      sendRows = lockRows.map(item => item.row);
-      refs = sendRows.map(r => r.f.ref).filter(Boolean).sort();
-    }
+      const tpl = templateFor(templates, bucket);
+      if (!tpl) {
+        skipped++; results.push({ ...base, status: 'skipped', reason: `no active template for "${bucket}"` });
+        return;
+      }
+      const latestAudit = completedAudits.filter(a => deptMatches(depts, a.dept || a.deptName || a.department, deptCode))
+        .sort((a, b) => Date.parse(a.submittedAt || a.date || 0) - Date.parse(b.submittedAt || b.date || 0)).pop() || {};
+      const { to, cc } = resolveDeptRecipients(ctx, deptCode, bucket, { auditorName: latestAudit.auditor, rows: rows.map(r => r.f) });
+      if (!to.length) {
+        // Surface the gap instead of dropping silently — a missing SPOC address in the Email
+        // Master is exactly how a department stops receiving reminders without anyone noticing.
+        skipped++;
+        const reason = !master ? `dept ${deptCode} is not in the Email Master` : `no usable email addresses for dept ${deptCode}`;
+        results.push({ ...base, status: 'skipped', reason });
+        logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptName} — ${rows.length} NC(s)`, status: 'skipped', error: reason, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+        return;
+      }
 
-    const worst = sendRows.reduce((a, b) => (b.hit.overdue > a.hit.overdue ? b : a), sendRows[0]);
-    const vars = {
-      department_name: deptName,
-      spoc_name: (master && master.spocName) || deptName,
-      nc_count: sendRows.length,
-      nc_table: buildNcTable(sendRows),
-      nc_number: worst.f.ref || '',
-      target_date: worst.f.due || '',
-      delay_days: worst.hit.overdue || 0,
-      clause_name: worst.f.clause || '',
-      clause_description: worst.f.desc || '',
-      window_days: windowDays,
-      escalation_level: bucket.startsWith('escalation') ? String(bucket.split('_')[1]) : '',
-      audit_name: worst.f.auditRef || '',
-    };
-    // Level 2 goes to the HOD and level 3 to Management, so they must not be greeted as the SPOC.
-    vars.recipient_name = bucket === 'escalation_3' ? 'Management Team' : bucket === 'escalation_2' ? `Head of Department, ${deptName}` : vars.spoc_name;
-    vars.escalation_label = bucket === 'escalation_3' ? 'Management review' : bucket === 'escalation_2' ? 'Head of Department review' : '';
-    const { subject, html, text } = renderEmail(tpl, typeOfBucket(bucket), vars);
-    if (dryRun) {
-      results.push({ bucket, dept: deptCode, deptName, ncCount: sendRows.length, status: 'dry-run', to, cc, subject, html, refs, frequencyDays });
-      return;
-    }
-
-    try {
-      const transport = getMailer();
-      await transport.sendMail({ from: SMTP_FROM, to, cc, subject, html, text });
-      await Promise.all(lockRows.map(item => commitEmailLock(collection, item.lockKey, frequencyDays, true, by)));
-      sent++;
-      results.push({ bucket, dept: deptCode, deptName, ncCount: sendRows.length, status: 'sent', to, cc, subject });
-      logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: to.join(', '), cc: cc.join(', '), subject, status: 'sent', dept: deptCode, ncCount: sendRows.length, sentAt: new Date().toISOString() });
-    } catch (err) {
-      await Promise.all(lockRows.map(item => commitEmailLock(collection, item.lockKey, frequencyDays, false, by)));
-      failed++;
-      results.push({ bucket, dept: deptCode, deptName, ncCount: sendRows.length, status: 'failed', to, cc, error: err.message });
-      logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: to.join(', '), cc: cc.join(', '), subject, status: 'failed', error: err.message, dept: deptCode, ncCount: sendRows.length, sentAt: new Date().toISOString() });
-    }
+      const mailArgs = { dept: deptCode, deptName, to, cc, tpl, tplType: bucket.startsWith('escalation') ? 'escalation' : bucket, vars: built.vars, entry: { kind: 'reminder', reminderNo: built.reminderNo, level: maxLevel, ncCount: rows.length, maxDelay: built.maxDelay }, dryRun };
+      if (dryRun) {
+        const m = await sendThreaded(collection, mailArgs);
+        results.push({ ...base, status: 'dry-run', to, cc, subject: m.subject, html: m.html, position: m.position });
+        return;
+      }
+      if (!(await lockThread(collection, deptCode, by))) {
+        skipped++; results.push({ ...base, status: 'throttled', reason: 'another email for this department is being sent right now' });
+        return;
+      }
+      try {
+        const m = await sendThreaded(collection, mailArgs);
+        // The NC counters move only after the mail has really gone out.
+        await saveNcStates(collection, rows.map(r => ({ id: r.f.id || r.f.ref, value: { ref: r.f.ref, dept: deptCode, count: r.plan.count, lastDay: todayStr, firstAt: (ncStates.get(ncKey(r.f.id || r.f.ref)) || {}).firstAt || new Date().toISOString(), level: r.plan.level } })));
+        sent++;
+        results.push({ ...base, status: 'sent', to, cc, subject: m.subject, position: m.position });
+        logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: to.join(', '), cc: cc.join(', '), subject: m.subject, status: 'sent', dept: deptCode, ncCount: rows.length, reminderNo: built.reminderNo, maxDelay: built.maxDelay, sentAt: new Date().toISOString() });
+      } catch (err) {
+        failed++;
+        results.push({ ...base, status: 'failed', to, cc, error: err.message });
+        logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: to.join(', '), cc: cc.join(', '), subject: `[not sent] ${deptName}`, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+      } finally {
+        await unlockThread(collection, deptCode);
+      }
     } catch (err) {
       failed++;
       console.error(`[AuditPro] Email automation: ${bucket} for ${deptCode} aborted:`, err);
@@ -427,7 +419,7 @@ async function runEmailAutomation(options = {}) {
       logs.push({ id: `${bucket}_${deptCode}_${Date.now()}`, type: bucket, to: '', cc: '', subject: `[not sent] ${deptCode} — ${rows.length} NC(s)`, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
     }
   };
-  // A few departments at a time: sequential SMTP + lock round trips for 20+ groups can outlast the
+  // A few departments at a time: sequential SMTP round trips for 20+ departments can outlast the
   // serverless time limit, and one slow mail should not hold up the rest.
   const queue = Array.from(groups.values());
   await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
@@ -440,7 +432,7 @@ async function runEmailAutomation(options = {}) {
   // see at a glance that a department is quiet because they switched it off, not because it broke.
   const mutedGroups = Array.from(new Map(muted.map(m => [`${m.bucket}|${m.deptCode}`, m])).values());
   const summary = {
-    ok: true, ranAt: new Date().toISOString(), tz, today: todayYmd(tz), dryRun,
+    ok: true, ranAt: new Date().toISOString(), tz, today: todayStr, dryRun,
     groups: results.length, sent, failed, skipped, muted: mutedGroups, results,
   };
   if (!dryRun) {
@@ -454,8 +446,6 @@ async function runEmailAutomation(options = {}) {
   }
   return summary;
 }
-
-
 
 // Who an email for one department goes to: SPOC / Manager / HOD / Management from the Email Master
 // plus the department's portal users, mandatory CC (auditor + admins), global CC and the per-department
@@ -565,25 +555,33 @@ async function sendAuditSubmissionEmails(options = {}) {
         audit_name: audit.title || ref,
         nc_count: rows.length,
         submitted_at: new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric' }).format(isNaN(submitted) ? new Date() : submitted),
-        nc_table: rows.length ? buildNcTable(rows.map(f => ({ f, hit: { overdue: 0 } }))) : '',
+        nc_table: rows.length ? buildNcTable(rows.map(f => ({ f, hit: {} })), { mode: 'audit' }) : '',
       };
       vars.summary = buildSummary([['Audit', vars.audit_name], ['Findings (NCs)', String(vars.nc_count)], ['Submitted on', vars.submitted_at]], '#16a34a');
-      const { subject, html, text } = renderEmail(tpl, 'audit_submission', vars);
-      if (dryRun) { note({ ...base, status: 'dry-run', ncCount: rows.length, to, cc, subject }); continue; }
-
-      const lockKey = `audit_submission:${ref}:${deptCode}`;
-      if (!(await claimEmailLock(collection, lockKey, 365, { bucket: 'audit_submission', deptCode, refs: [ref] }, by))) {
-        skipped++; note({ ...base, status: 'throttled', reason: 'the audit report mail was already sent for this audit' }); continue;
+      const mailArgs = { dept: deptCode, deptName, to, cc, tpl, tplType: 'audit_submission', vars, entry: { kind: 'audit_report', ncCount: rows.length }, dryRun };
+      if (dryRun) {
+        const m = await sendThreaded(collection, mailArgs);
+        note({ ...base, status: 'dry-run', ncCount: rows.length, to, cc, subject: m.subject });
+        continue;
       }
+      if (!(await lockThread(collection, deptCode, by))) { note({ ...base, status: 'deferred', reason: 'another email for this department is being sent right now' }); continue; }
       try {
-        await getMailer().sendMail({ from: SMTP_FROM, to, cc, subject, html, text });
-        await commitEmailLock(collection, lockKey, 365, true, by);
-        sent++;
-        note({ ...base, status: 'sent', ncCount: rows.length, to, cc, subject }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject, status: 'sent', dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
-      } catch (err) {
-        await commitEmailLock(collection, lockKey, 365, false, by);
-        failed++;
-        note({ ...base, status: 'failed', error: err.message }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+        const lockKey = `audit_submission:${ref}:${deptCode}`;
+        if (!(await claimEmailLock(collection, lockKey, 365, { bucket: 'audit_submission', deptCode, refs: [ref] }, by))) {
+          skipped++; note({ ...base, status: 'throttled', reason: 'the audit report mail was already sent for this audit' }); continue;
+        }
+        try {
+          const m = await sendThreaded(collection, mailArgs);
+          await commitEmailLock(collection, lockKey, 365, true, by);
+          sent++;
+          note({ ...base, status: 'sent', ncCount: rows.length, to, cc, subject: m.subject }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject: m.subject, status: 'sent', dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+        } catch (err) {
+          await commitEmailLock(collection, lockKey, 365, false, by);
+          failed++;
+          note({ ...base, status: 'failed', error: err.message }, { id: `audit_submission_${deptCode}_${Date.now()}`, type: 'audit_submission', to: to.join(', '), cc: cc.join(', '), subject: `[not sent] Audit Report - ${deptName}`, status: 'failed', error: err.message, dept: deptCode, ncCount: rows.length, sentAt: new Date().toISOString() });
+        }
+      } finally {
+        await unlockThread(collection, deptCode);
       }
     } catch (err) {
       failed++;
@@ -673,24 +671,28 @@ async function sendNcReminder(options = {}) {
   if (!(await claimEmailLock(collection, lockKey, 1, { bucket: 'capa_reminder', deptCode, refs: [f.ref] }, by))) {
     return { ok: false, throttled: true, error: 'A reminder for this NC was already sent in the last 24 hours' };
   }
-  const row = { f, hit: { overdue: Math.max(0, overdue) } };
-  const vars = {
-    department_name: deptName, spoc_name: (master && master.spocName) || deptName, recipient_name: (master && master.spocName) || deptName,
-    nc_count: 1, nc_table: buildNcTable([row]), nc_number: f.ref || '', target_date: f.due || '', delay_days: Math.max(0, overdue),
-    clause_name: f.clause || '', clause_description: f.desc || '', window_days: Math.max(0, -overdue), audit_name: f.auditRef || '',
-  };
-  const mail = renderEmail(tpl, type, vars);
-  const subject = `CAPA Reminder - ${f.ref} - ${deptName}`;
+  const states = await loadNcStates(collection);
+  const prior = states.get(ncKey(f.id || f.ref)) || {};
+  const daysToDue = Math.round((dueMs - todayMs) / DAY_MS);
+  const row = { f, hit: { overdue: Math.max(0, overdue), daysToDue: Number.isFinite(daysToDue) ? daysToDue : 0, reminder: (Number(prior.count) || 0) + 1 } };
+  const built = reminderVars({ rows: [row], level: type === 'delayed' ? 1 : 0, deptName, master, rules, todayMs });
+  if (!(await lockThread(collection, deptCode, by))) {
+    await releaseEmailLock(collection, lockKey);
+    return { ok: false, error: 'Another email for this department is being sent right now. Please try again in a minute.' };
+  }
   try {
-    await getMailer().sendMail({ from: SMTP_FROM, to, cc, subject, html: mail.html, text: mail.text });
+    const m = await sendThreaded(collection, { dept: deptCode, deptName, to, cc, tpl, tplType: type, vars: built.vars, entry: { kind: 'manual', reminderNo: built.reminderNo, level: type === 'delayed' ? 1 : 0, ncCount: 1, maxDelay: built.maxDelay } });
+    await saveNcStates(collection, [{ id: f.id || f.ref, value: { ref: f.ref, dept: deptCode, count: row.hit.reminder, lastDay: todayYmd(tz), firstAt: prior.firstAt || new Date().toISOString(), level: type === 'delayed' ? 1 : 0 } }]);
     await commitEmailLock(collection, lockKey, 1, true, by);
-    await appendEmailLogs(collection, [{ id: `capa_reminder_${f.ref}_${Date.now()}`, type: 'capa_reminder', to: to.join(', '), cc: cc.join(', '), subject, status: 'sent', dept: deptCode, ncCount: 1, sentAt: new Date().toISOString() }], `email-engine:${by}`);
-    return { ok: true, to, cc, subject };
+    await appendEmailLogs(collection, [{ id: `capa_reminder_${f.ref}_${Date.now()}`, type: 'capa_reminder', to: to.join(', '), cc: cc.join(', '), subject: m.subject, status: 'sent', dept: deptCode, ncCount: 1, reminderNo: built.reminderNo, maxDelay: built.maxDelay, sentAt: new Date().toISOString() }], `email-engine:${by}`);
+    return { ok: true, to, cc, subject: m.subject, reminderNo: built.reminderNo };
   } catch (err) {
     await commitEmailLock(collection, lockKey, 1, false, by);
-    await appendEmailLogs(collection, [{ id: `capa_reminder_${f.ref}_${Date.now()}`, type: 'capa_reminder', to: to.join(', '), cc: cc.join(', '), subject, status: 'failed', error: err.message, dept: deptCode, ncCount: 1, sentAt: new Date().toISOString() }], `email-engine:${by}`);
+    await appendEmailLogs(collection, [{ id: `capa_reminder_${f.ref}_${Date.now()}`, type: 'capa_reminder', to: to.join(', '), cc: cc.join(', '), subject: `[not sent] CAPA Reminder - ${f.ref}`, status: 'failed', error: err.message, dept: deptCode, ncCount: 1, sentAt: new Date().toISOString() }], `email-engine:${by}`);
     return { ok: false, error: `Email could not be sent: ${err.message}` };
+  } finally {
+    await unlockThread(collection, deptCode);
   }
 }
 
-module.exports = { sendDueAuditSubmissionEmails, sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, classify, classifyAll, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
+module.exports = { reminderPlan, levelFor, sendDueAuditSubmissionEmails, sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };

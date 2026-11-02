@@ -15,7 +15,7 @@ function escapeHtml(s) {
 }
 
 // Variables whose value is already safe HTML. Everything else is escaped when substituted.
-const RAW_VARS = new Set(['nc_table', 'button', 'summary']);
+const RAW_VARS = new Set(['nc_table', 'button', 'summary', 'history']);
 
 function fillTemplate(str, vars) {
   return String(str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => {
@@ -46,7 +46,7 @@ const SEV = {
   obs: { label: 'Observation', bg: '#7c3aed' },
 };
 const STATUS_LABEL = { open: 'Open', 'in-progress': 'In Progress', delayed: 'Delayed', 'pending-closure': 'Under Review', closed: 'Closed' };
-const MAX_TABLE_ROWS = 30;
+const MAX_TABLE_ROWS = 60;
 
 function sevKey(sev) {
   const t = String(sev || 'obs').toLowerCase();
@@ -63,31 +63,62 @@ function fmtDue(value) {
   return `${m[3]} ${mon} ${m[1]}`;
 }
 
-// rows: [{ f: finding, hit: { overdue } }]; `workflowStatus` maps a finding to its status key.
-function buildNcTable(rows, workflowStatus = f => String((f && f.status) || 'open')) {
+// rows: [{ f: finding, hit: { overdue, daysToDue, reminder } }]; `workflowStatus` maps a finding to its status key.
+// mode 'reminder' (default) shows the reminder number and the days delayed; mode 'audit' shows the status instead.
+function delayCell(hit) {
+  if (hit && hit.overdue > 0) return `<span style="color:#b91c1c;font-weight:700;">${hit.overdue} day${hit.overdue === 1 ? '' : 's'} delayed</span>`;
+  if (hit && hit.daysToDue === 0) return '<span style="color:#b45309;font-weight:700;">Due today</span>';
+  if (hit && hit.daysToDue > 0) return `<span style="color:#1d4ed8;font-weight:600;">Due in ${hit.daysToDue} day${hit.daysToDue === 1 ? '' : 's'}</span>`;
+  return '<span style="color:#9ca3af;">-</span>';
+}
+function buildNcTable(rows, workflowStatus = f => String((f && f.status) || 'open'), opts = {}) {
+  const mode = opts.mode === 'audit' ? 'audit' : 'reminder';
+  const max = opts.maxRows || MAX_TABLE_ROWS;
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return '';
-  const shown = list.slice(0, MAX_TABLE_ROWS);
-  const th = (t, w, align = 'left') => `<th align="${align}" style="padding:9px 10px;background:#f3f4f6;border-bottom:2px solid #d1d5db;font:600 11px ${FONT};color:#4b5563;text-transform:uppercase;letter-spacing:.4px;${w ? `width:${w};` : ''}">${t}</th>`;
+  const shown = list.slice(0, max);
+  const th = (t, align = 'left') => `<th align="${align}" style="padding:9px 10px;background:#f3f4f6;border-bottom:2px solid #d1d5db;font:600 11px ${FONT};color:#4b5563;text-transform:uppercase;letter-spacing:.4px;">${t}</th>`;
+  const head = mode === 'audit'
+    ? [th('NC No. / Observation'), th('Clause'), th('Severity'), th('Target Date'), th('Status')]
+    : [th('NC No. / Observation'), th('Clause'), th('Severity'), th('Target Date'), th('Reminder'), th('Days Delayed')];
   const body = shown.map(({ f, hit }, i) => {
     const sev = SEV[sevKey(f.sev || f.severity)];
-    const overdue = hit && hit.overdue > 0 ? `<span style="color:#b91c1c;font-weight:700;">${hit.overdue} day${hit.overdue === 1 ? '' : 's'}</span>` : '<span style="color:#9ca3af;">-</span>';
-    const status = STATUS_LABEL[workflowStatus(f)] || escapeHtml(workflowStatus(f));
     const td = `padding:10px;border-bottom:1px solid #e5e7eb;font:13px ${FONT};color:#1f2937;vertical-align:top;`;
+    const last = mode === 'audit'
+      ? `<td style="${td}">${STATUS_LABEL[workflowStatus(f)] || escapeHtml(workflowStatus(f))}</td>`
+      : `<td style="${td}white-space:nowrap;"><span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#eef2ff;color:#3730a3;font:700 12px ${FONT};">#${hit && hit.reminder ? hit.reminder : 1}</span></td><td style="${td}white-space:nowrap;">${delayCell(hit)}</td>`;
     return `<tr style="background:${i % 2 ? '#fafafa' : '#ffffff'};">
 <td style="${td}"><div style="font-weight:700;color:#111827;">${escapeHtml(f.ref || '')}</div>${f.desc ? `<div style="font:12px/1.45 ${FONT};color:#6b7280;margin-top:3px;">${escapeHtml(shortText(f.desc, 150))}</div>` : ''}</td>
 <td style="${td}">${escapeHtml(shortText(f.clause || '-', 28))}</td>
 <td style="${td}"><span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${sev.bg};color:#fff;font:600 11px ${FONT};">${sev.label}</span></td>
 <td style="${td}white-space:nowrap;">${escapeHtml(fmtDue(f.due))}</td>
-<td style="${td}">${status}</td>
-<td style="${td}white-space:nowrap;">${overdue}</td></tr>`;
+${last}</tr>`;
   }).join('');
+  const cols = head.length;
   const more = list.length > shown.length
-    ? `<tr><td colspan="6" style="padding:10px;font:italic 12px ${FONT};color:#6b7280;">+ ${list.length - shown.length} more NC(s). Open the portal to see the complete list.</td></tr>`
+    ? `<tr><td colspan="${cols}" style="padding:10px;font:italic 12px ${FONT};color:#6b7280;">+ ${list.length - shown.length} more NC(s). Open the portal to see the complete list.</td></tr>`
     : '';
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;border-spacing:0;margin:14px 0 6px;">
-<thead><tr>${th('NC No. / Observation')}${th('Clause')}${th('Severity')}${th('Target Date')}${th('Status')}${th('Overdue')}</tr></thead>
+<thead><tr>${head.join('')}</tr></thead>
 <tbody>${body}${more}</tbody></table>`;
+}
+
+// Earlier messages of this conversation, so every email carries the full trail on its own.
+function historyLabel(h) {
+  if (h.kind === 'audit_report') return 'Audit report';
+  if (h.kind === 'manual') return `Manual reminder #${h.reminderNo || ''}`.trim();
+  const to = h.level >= 3 ? ' (Management)' : h.level === 2 ? ' (HOD)' : '';
+  return `Reminder #${h.reminderNo || ''}${to}`.trim();
+}
+function buildHistory(entries, limit = 8) {
+  const list = (Array.isArray(entries) ? entries : []).slice(-limit);
+  if (!list.length) return '';
+  const th = t => `<th align="left" style="padding:7px 10px;background:#f3f4f6;border-bottom:1px solid #d1d5db;font:600 10.5px ${FONT};color:#6b7280;text-transform:uppercase;letter-spacing:.4px;">${t}</th>`;
+  const td = `padding:7px 10px;border-bottom:1px solid #eef0f3;font:12px ${FONT};color:#374151;`;
+  const date = iso => { const d = new Date(iso); return isNaN(d) ? '-' : d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }); };
+  const rows = list.map(h => `<tr><td style="${td}">${h.n || ''}</td><td style="${td}white-space:nowrap;">${date(h.at)}</td><td style="${td}">${escapeHtml(historyLabel(h))}</td><td style="${td}">${h.ncCount != null ? h.ncCount : '-'}</td><td style="${td}">${h.maxDelay > 0 ? h.maxDelay + ' days' : '-'}</td></tr>`).join('');
+  return `<div style="margin:22px 0 4px;font:700 12px ${FONT};color:#374151;text-transform:uppercase;letter-spacing:.5px;">Earlier in this conversation</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;border-spacing:0;margin:8px 0;"><thead><tr>${th('#')}${th('Date')}${th('Message')}${th('NCs')}${th('Max delay')}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // Small "facts" box: [[label, value], ...]
@@ -153,39 +184,46 @@ const DEFAULT_TEMPLATES = [
     body: `<p style="${P}">Dear {{spoc_name}},</p>
 <p style="${P}">The audit of <strong>{{department_name}}</strong> has been completed and its report is now available in AuditPro.</p>
 {{summary}}
-<p style="${P}">The non-conformances (NCs) raised are listed below. Please review each one and submit the corrective action, with closure evidence, in the CAPA Tracker before its target date.</p>
+<p style="${P}">The non-conformances (NCs) raised are listed below. Please review each one and submit the corrective action, with closure evidence, in the CAPA Tracker before its target date. You will receive a reminder one day before each target date and then once a week until the NC is closed; all of them arrive in this same conversation.</p>
 {{nc_table}}
 {{button}}
+{{history}}
 <p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`,
   },
   {
     id: 'tpl_upcoming_reminder', type: 'upcoming_reminder', name: 'Upcoming Target Closure Reminder', active: true,
     subject: 'Reminder: {{nc_count}} NC(s) due soon - {{department_name}}',
-    body: `<p style="${P}">Dear {{spoc_name}},</p>
-<p style="${P}">This is a reminder that the following NC(s) of <strong>{{department_name}}</strong> reach their target closure date within the next {{window_days}} day(s).</p>
+    body: `<p style="${P}">Dear {{recipient_name}},</p>
+<p style="${P}">This is <strong>reminder #{{reminder_count}}</strong> for the open NC(s) of <strong>{{department_name}}</strong> that reach their target closure date {{due_phrase}}.</p>
+{{summary}}
 {{nc_table}}
-<p style="${P}">Please complete the corrective action and submit the closure evidence in the CAPA Tracker on or before the target date, so that the NC does not become overdue.</p>
+<p style="${P}">Please complete the corrective action and submit the closure evidence in the CAPA Tracker on or before the target date, so that the NC does not become overdue. If an NC stays open, a further reminder follows in this conversation after {{repeat_days}} days.</p>
 {{button}}
+{{history}}
 <p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`,
   },
   {
     id: 'tpl_delayed', type: 'delayed', name: 'Delayed NC Notification', active: true,
     subject: 'Action required: {{nc_count}} overdue NC(s) - {{department_name}}',
-    body: `<p style="${P}">Dear {{spoc_name}},</p>
-<p style="${P}">The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open.</p>
+    body: `<p style="${P}">Dear {{recipient_name}},</p>
+<p style="${P}">This is <strong>reminder #{{reminder_count}}</strong>. The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open; the longest has been delayed by <strong>{{max_days_delayed}} day(s)</strong>.</p>
+{{summary}}
 {{nc_table}}
-<p style="${P}">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management.</p>
+<p style="${P}">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management, in this same conversation.</p>
 {{button}}
+{{history}}
 <p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`,
   },
   {
     id: 'tpl_escalation', type: 'escalation', name: 'Escalation Reminder', active: true,
     subject: 'Escalation (Level {{escalation_level}}): {{nc_count}} overdue NC(s) - {{department_name}}',
     body: `<p style="${P}">Dear {{recipient_name}},</p>
-<p style="${P}">{{nc_count}} NC(s) of <strong>{{department_name}}</strong> remain overdue and have been escalated to <strong>Level {{escalation_level}}</strong> ({{escalation_label}}).</p>
+<p style="${P}">This is <strong>reminder #{{reminder_count}}</strong>. {{nc_count}} NC(s) of <strong>{{department_name}}</strong> remain overdue (the longest by <strong>{{max_days_delayed}} day(s)</strong>) and have been escalated to <strong>Level {{escalation_level}}</strong> ({{escalation_label}}).</p>
+{{summary}}
 {{nc_table}}
 <p style="${P}">Immediate attention is needed. Please make sure the corrective action is completed and the closure evidence is submitted in the CAPA Tracker without further delay.</p>
 {{button}}
+{{history}}
 <p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>`,
   },
 ];
@@ -199,9 +237,13 @@ const LEGACY_BODIES = {
   delayed: 'Dear {{spoc_name}},<br><br>The following NCs have crossed the target closure date.<br><br>{{nc_table}}<br>Please submit closure evidence immediately.<br><br>Regards,<br>Audit Team',
   escalation: 'Dear {{spoc_name}},<br><br>The following NCs remain delayed and have reached escalation level {{escalation_level}}.<br><br>{{nc_table}}<br>Regards,<br>Audit Team',
 };
+
+// Wording shipped earlier in this project. Same rule: unedited text is replaced by the current default.
+const PREVIOUS_BODIES = {'audit_submission': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">The audit of <strong>{{department_name}}</strong> has been completed and its report is now available in AuditPro.</p>\n{{summary}}\n<p style="margin:0 0 12px;">The non-conformances (NCs) raised are listed below. Please review each one and submit the corrective action, with closure evidence, in the CAPA Tracker before its target date.</p>\n{{nc_table}}\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'upcoming_reminder': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">This is a reminder that the following NC(s) of <strong>{{department_name}}</strong> reach their target closure date within the next {{window_days}} day(s).</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Please complete the corrective action and submit the closure evidence in the CAPA Tracker on or before the target date, so that the NC does not become overdue.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'delayed': '<p style="margin:0 0 12px;">Dear {{spoc_name}},</p>\n<p style="margin:0 0 12px;">The following NC(s) of <strong>{{department_name}}</strong> have <strong>crossed their target closure date</strong> and are still open.</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Please submit the corrective action and closure evidence in the CAPA Tracker immediately. NCs that stay overdue are escalated to the Head of Department and then to Management.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>', 'escalation': '<p style="margin:0 0 12px;">Dear {{recipient_name}},</p>\n<p style="margin:0 0 12px;">{{nc_count}} NC(s) of <strong>{{department_name}}</strong> remain overdue and have been escalated to <strong>Level {{escalation_level}}</strong> ({{escalation_label}}).</p>\n{{nc_table}}\n<p style="margin:0 0 12px;">Immediate attention is needed. Please make sure the corrective action is completed and the closure evidence is submitted in the CAPA Tracker without further delay.</p>\n{{button}}\n<p style="margin:18px 0 0;">Regards,<br><strong>Audit Team</strong><br>OnePWS Pvt. Ltd.</p>'};
 const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
 function isLegacyTemplate(row, type) {
-  return Boolean(LEGACY_BODIES[type]) && norm(row.body) === norm(LEGACY_BODIES[type]);
+  const body = norm(row.body);
+  return Boolean(LEGACY_BODIES[type]) && (body === norm(LEGACY_BODIES[type]) || body === norm(PREVIOUS_BODIES[type]));
 }
 
 // Stored template for a type (admin-edited text wins), else the built-in default.
@@ -217,13 +259,19 @@ function pickTemplate(templates, type) {
 
 // ── render ────────────────────────────────────────────
 // tpl: { subject, body }; type: key into TYPE_STYLE; vars: template values.
-function renderEmail(tpl, type, vars = {}) {
+// opts.subject : replaces the template subject (threaded emails must keep one fixed subject)
+function renderEmail(tpl, type, vars = {}, opts = {}) {
   const st = TYPE_STYLE[type] || TYPE_STYLE.test;
   const all = { portal_url: PORTAL_URL, ...vars };
   if (!all.recipient_name) all.recipient_name = all.spoc_name || 'Team';
   if (!all.button) all.button = buildButton(type === 'audit_submission' ? 'View Findings in AuditPro' : 'Open CAPA Tracker in AuditPro', PORTAL_URL, st.accent);
-  const subject = fillSubject(tpl.subject, all);
-  const content = fillTemplate(tpl.body, all);
+  const subject = opts.subject || fillSubject(tpl.subject, all);
+  let bodyTpl = String(tpl.body || '');
+  // A template edited before reminders were threaded has no {{summary}} / {{history}} slot. Add them so
+  // the reminder count, the days delayed and the earlier messages are never missing from an email.
+  if (all.summary && !/\{\{summary\}\}/.test(bodyTpl)) bodyTpl = /\{\{nc_table\}\}/.test(bodyTpl) ? bodyTpl.replace('{{nc_table}}', '{{summary}}{{nc_table}}') : bodyTpl + '{{summary}}';
+  if (all.history && !/\{\{history\}\}/.test(bodyTpl)) bodyTpl += '{{history}}';
+  const content = fillTemplate(bodyTpl, all);
   const html = shell({ type, content, preheader: subject, escalationLevel: all.escalation_level });
   return { subject, html, text: htmlToText(content) + `\n\n--\nOnePWS AuditPro: ${PORTAL_URL}\nThis is an automated message; replies are not monitored.` };
 }
@@ -233,20 +281,22 @@ function sampleVars(type) {
   const today = new Date();
   const ymd = d => new Date(today.getTime() + d * 86400000).toISOString().slice(0, 10);
   const rows = [
-    { f: { ref: 'SAMPLE-2026-001', desc: 'Calibration records for the torque wrenches are not available at the workstation.', clause: 'AS9100D 7.1.5', sev: 'major', due: ymd(-9), status: 'delayed' }, hit: { overdue: 9 } },
-    { f: { ref: 'SAMPLE-2026-002', desc: 'Obsolete drawing revision found on the shop floor console.', clause: 'AS9100D 7.5.3', sev: 'minor', due: ymd(-2), status: 'open' }, hit: { overdue: 2 } },
-    { f: { ref: 'SAMPLE-2026-003', desc: 'Training matrix has not been updated for new operators.', clause: 'AS9100D 7.2', sev: 'obs', due: ymd(5), status: 'in-progress' }, hit: { overdue: 0 } },
+    { f: { ref: 'SAMPLE-2026-001', desc: 'Calibration records for the torque wrenches are not available at the workstation.', clause: 'AS9100D 7.1.5', sev: 'major', due: ymd(-9), status: 'delayed' }, hit: { overdue: 9, daysToDue: -9, reminder: 2 } },
+    { f: { ref: 'SAMPLE-2026-002', desc: 'Obsolete drawing revision found on the shop floor console.', clause: 'AS9100D 7.5.3', sev: 'minor', due: ymd(-2), status: 'open' }, hit: { overdue: 2, daysToDue: -2, reminder: 2 } },
+    { f: { ref: 'SAMPLE-2026-003', desc: 'Training matrix has not been updated for new operators.', clause: 'AS9100D 7.2', sev: 'obs', due: ymd(5), status: 'in-progress' }, hit: { overdue: 0, daysToDue: 1, reminder: 1 } },
   ];
   return {
     department_name: 'Sample Department', spoc_name: 'Sample SPOC', recipient_name: type === 'escalation' ? 'Head of Department, Sample Department' : 'Sample SPOC',
     audit_name: 'Sample Internal Audit', nc_count: rows.length, submitted_at: today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
     nc_table: buildNcTable(rows), nc_number: rows[0].f.ref, target_date: rows[0].f.due, delay_days: 9, clause_name: rows[0].f.clause,
-    clause_description: rows[0].f.desc, window_days: 2, escalation_level: '2', escalation_label: 'Head of Department review',
+    clause_description: rows[0].f.desc, window_days: 1, escalation_level: '2', escalation_label: 'Head of Department review',
+    reminder_count: 2, max_days_delayed: 9, due_phrase: 'tomorrow', repeat_days: 7,
+    history: buildHistory([{ n: 1, at: new Date(today.getTime() - 7 * 86400000).toISOString(), kind: 'reminder', reminderNo: 1, level: 1, ncCount: 3, maxDelay: 2 }]),
     summary: buildSummary([['Audit', 'Sample Internal Audit'], ['Findings (NCs)', String(rows.length)], ['Submitted on', today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })]], '#16a34a'),
   };
 }
 
 module.exports = {
   PORTAL_URL, escapeHtml, fillTemplate, buildNcTable, buildSummary, buildButton, htmlToText,
-  sampleVars, DEFAULT_TEMPLATES, DEFAULT_BY_TYPE, TYPE_STYLE, isLegacyTemplate, pickTemplate, renderEmail,
+  sampleVars, buildHistory, DEFAULT_TEMPLATES, DEFAULT_BY_TYPE, TYPE_STYLE, isLegacyTemplate, pickTemplate, renderEmail,
 };
