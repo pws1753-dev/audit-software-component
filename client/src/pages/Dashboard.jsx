@@ -18,7 +18,7 @@ import {
   deptValuesMatch,
   findingMatchesDeptCode,
   normalizeAuditSeverity,
-  deptToken,
+  dedupeDeptAliases,
   delayDays
 } from '../utils/dashboardHelpers';
 
@@ -70,20 +70,8 @@ export default function Dashboard({ dateFrom, dateTo }) {
     if (role === 'spoc') {
       list = depts.filter(d => deptValuesMatch(depts, d.code, dept) || deptValuesMatch(depts, d.name, dept));
     }
-    const byAlias = new Map();
-    list.forEach(d => {
-      const key = deptToken(d.name) || deptToken(d.code);
-      const prev = byAlias.get(key);
-      if (!prev) {
-        byAlias.set(key, d);
-      } else {
-        const hasFindings = rawFindings.some(f => f.dept === d.code || f.deptName === d.name);
-        const prevHasFindings = rawFindings.some(f => f.dept === prev.code || f.deptName === prev.name);
-        if (hasFindings && !prevHasFindings) byAlias.set(key, d);
-      }
-    });
-    return [...byAlias.values()];
-  }, [depts, currentUser, rawFindings]);
+    return dedupeDeptAliases(list, rawFindings, completed);
+  }, [depts, currentUser, rawFindings, completed]);
 
   const overallAuditScore = useMemo(() => {
     return orgLatestAuditScore(completed, rawFindings, visibleDepts);

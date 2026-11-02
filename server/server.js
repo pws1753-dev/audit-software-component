@@ -19,7 +19,7 @@ const mediaRoutes = require('./routes/media');
 
 const app = express();
 const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 3001);
-const REQUIRED_SYNC_CLIENT = 'AuditPro-Web/2026-07-02-sync-guard-2';
+const REQUIRED_SYNC_CLIENT = 'AuditPro-Web/2026-11-02-server-mail';
 const APP_VERSION = process.env.APP_VERSION || '2026-07-02';
 
 app.disable('x-powered-by');

@@ -2,6 +2,18 @@
 
 const express = require('express');
 const router = express.Router();
+const { sendDueAuditSubmissionEmails } = require('../lib/email-engine');
+
+// After an audit is saved, email its department. Never fails or noticeably delays the save: the result
+// is ignored, it is capped at 20s and the daily run retries anything that did not go out.
+async function mailNewAudits(by) {
+  try {
+    await Promise.race([
+      sendDueAuditSubmissionEmails({ by: `sync:${by || 'user'}`, waitForFindingsMs: 6000 }),
+      new Promise(resolve => setTimeout(resolve, 20000)),
+    ]);
+  } catch (err) { console.error('[AuditPro] Audit report email failed:', err); }
+}
 const { getCollection } = require('../lib/mongo');
 const { wrapAsync, requireAdmin, requirePageAccess, actorOf, invalidateAuthCaches } = require('../middleware/auth');
 const {
@@ -137,6 +149,7 @@ router.put('/:key', wrapAsync(async (req, res) => {
   if (current && syncValuesEqual(key, current.value, incomingValue)) return res.json({ ok: true, key, skipped: true, updatedAt: current.updatedAt || null });
   await collection.updateOne({ key }, { $set: { key, value: incomingValue, updatedAt: now, updatedBy: actorOf(req) } }, { upsert: true });
   if (key === 'ap_users' || key === 'ap_permissions') invalidateAuthCaches();
+  if (key === 'ap_completed_audits') await mailNewAudits(actorOf(req));
   res.json({ ok: true, key, updatedAt: now });
 }));
 
@@ -166,6 +179,7 @@ router.post('/bulk', wrapAsync(async (req, res) => {
   if (!writeKeys.length) return res.json({ ok: true, count: 0, skipped: keys.length, updatedAt: now });
   await collection.bulkWrite(writeKeys.map(k => ({ updateOne: { filter: { key: k }, update: { $set: { key: k, value: items[k], updatedAt: now, updatedBy: actorOf(req) } }, upsert: true } })));
   if (writeKeys.includes('ap_users') || writeKeys.includes('ap_permissions')) invalidateAuthCaches();
+  if (writeKeys.includes('ap_completed_audits')) await mailNewAudits(actorOf(req));
   res.json({ ok: true, count: writeKeys.length, skipped: keys.length - writeKeys.length, updatedAt: now });
 }));
 

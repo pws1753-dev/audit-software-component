@@ -307,6 +307,25 @@ export function closureTrendDeptHasData(findings, deptCode, yr, depts) {
   });
 }
 
+
+// Two Master Library records can name the same department ("Surtec Paint Shop" and "Surtec & Paint Shop"
+// normalise to the same token), and the matching helpers treat them as one, so a table that lists every
+// record shows that department twice with identical numbers. Keep one record per token: the one that
+// really owns audits or findings (by exact code), else the first.
+export function dedupeDeptAliases(depts, findings, completed) {
+  const audits = completed || [], finds = findings || [];
+  const owns = (d) => (audits.some(a => a && String(a.dept || '').toUpperCase() === String(d.code || '').toUpperCase()) ? 2 : 0)
+    + (finds.some(f => f && String(f.dept || '').toUpperCase() === String(d.code || '').toUpperCase()) ? 1 : 0);
+  const chosen = new Map();
+  (depts || []).forEach(d => {
+    const key = deptToken(d.name) || deptToken(d.code);
+    const prev = chosen.get(key);
+    if (!prev || owns(d) > owns(prev)) chosen.set(key, d);
+  });
+  const keep = new Set(chosen.values());
+  return (depts || []).filter(d => keep.has(d));
+}
+
 export function deptToken(value) {
   return String(value || '').trim()
     .replace(/\([^)]*\)/g, ' ')

@@ -5,7 +5,7 @@ const { getCachedUsers, getCachedPermissions, invalidateUsers, invalidatePermiss
 const { cleanIdentity } = require('../lib/identity');
 const { passwordVersion, safeEqual } = require('../lib/password');
 
-const REQUIRED_SYNC_CLIENT = 'AuditPro-Web/2026-07-02-sync-guard-2';
+const REQUIRED_SYNC_CLIENT = 'AuditPro-Web/2026-11-02-server-mail';
 
 // Endpoints reachable without a session. Everything under /api/auth/ that Auth.js owns
 // (csrf, session, callback/credentials, signout…) is public by design — Auth.js enforces

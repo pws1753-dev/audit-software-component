@@ -17,7 +17,7 @@
 const { getCollection } = require('./mongo');
 const { getMailer, SMTP_FROM } = require('./mailer');
 const { mergeEmailLogs } = require('./sync-helpers');
-const { claimEmailLock, commitEmailLock } = require('./email-locks');
+const { claimEmailLock, commitEmailLock, emailSendLockKey } = require('./email-locks');
 const { buildNcTable: renderNcTable, buildSummary, pickTemplate, renderEmail } = require('./email-render');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -443,7 +443,15 @@ async function runEmailAutomation(options = {}) {
     ok: true, ranAt: new Date().toISOString(), tz, today: todayYmd(tz), dryRun,
     groups: results.length, sent, failed, skipped, muted: mutedGroups, results,
   };
-  if (!dryRun) console.log(`[AuditPro] Email automation: ${sent} sent, ${failed} failed, ${skipped} skipped, ${mutedGroups.length} muted`);
+  if (!dryRun) {
+    console.log(`[AuditPro] Email automation: ${sent} sent, ${failed} failed, ${skipped} skipped, ${mutedGroups.length} muted`);
+    // Safety net: any recent audit whose report mail was missed (old browser tab, SMTP hiccup) goes out now.
+    try {
+      const reports = await sendDueAuditSubmissionEmails({ by });
+      summary.auditReports = { sent: reports.sent, failed: reports.failed, skipped: reports.skipped };
+      if (reports.sent || reports.failed) console.log(`[AuditPro] Audit report emails: ${reports.sent} sent, ${reports.failed} failed`);
+    } catch (err) { console.error('[AuditPro] Audit report catch-up failed:', err); }
+  }
   return summary;
 }
 
@@ -534,6 +542,9 @@ async function sendAuditSubmissionEmails(options = {}) {
       const rows = findings.filter(f => String(f.auditRef || f.auditId || '') === ref || refs.has(String(f.ref || '')))
         .filter(f => deptMatches(depts, f.dept || f.deptName, deptCode));
 
+      // The audit and its findings are saved by separate requests. If the findings have not landed yet,
+      // do nothing (no send record is taken) so the next call sends the complete mail.
+      if (refs.size && !rows.length) { note({ ...base, status: 'deferred', reason: 'its findings are still being saved' }); continue; }
       if (deptRule.enabled === false) { skipped++; note({ ...base, status: 'skipped', reason: `${deptCode} is switched off in the Email Center` }); continue; }
       if (matching.length && !master) { skipped++; note({ ...base, status: 'skipped', reason: `email record for ${deptCode} is deactivated` }); continue; }
       const tpl = templateFor(templates, 'audit_submission');
@@ -584,6 +595,46 @@ async function sendAuditSubmissionEmails(options = {}) {
   return { ok: true, sent, failed, skipped, missing, results };
 }
 
+
+
+// Audits that still owe their "Audit Report Submitted" email (created recently, on-portal, no sent record).
+// Safe to call as often as needed: sent audits are skipped before anything is resolved or logged.
+// The portal calls it after every audit save and the daily run calls it as a safety net, so the mail
+// does not depend on the user's browser running the latest version of the portal.
+async function sendDueAuditSubmissionEmails(options = {}) {
+  const by = String(options.by || 'audit-submission');
+  const maxAgeMs = Math.max(1, Number(options.maxAgeDays || 7)) * DAY_MS;
+  const waitMs = Math.max(0, Number(options.waitForFindingsMs || 0));
+  const started = Date.now();
+  const collection = await getCollection();
+  let ready = [];
+  for (;;) {
+    const data = await readKeys(collection);
+    const depts = Array.isArray(data.ap_depts) ? data.ap_depts : [];
+    const findings = Array.isArray(data.ap_finds) ? data.ap_finds : [];
+    const candidates = (Array.isArray(data.ap_completed_audits) ? data.ap_completed_audits : []).filter(a => {
+      if (!a || a.deletedAt || a.derivedFromFindings || a.externalAudit || a.auditSource === 'external' || a.auditType === 'external') return false;
+      if (a.status && a.status !== 'submitted') return false;
+      const t = Date.parse(a.createdAt || a.updatedAt || a.submittedAt || '');
+      return Number.isFinite(t) && Date.now() - t <= maxAgeMs;
+    });
+    if (!candidates.length) return { ok: true, sent: 0, failed: 0, skipped: 0, results: [], missing: [] };
+    const locks = candidates.map(a => {
+      const ref = String(a.ref || a.auditRef || a.id);
+      const rec = depts.find(d => deptMatches(depts, d.code, a.dept) || deptMatches(depts, d.name, a.deptName || a.dept));
+      return { a, key: emailSendLockKey(`audit_submission:${ref}:${String((rec && rec.code) || a.dept || '').trim()}`) };
+    });
+    const done = new Set((await collection.find({ key: { $in: locks.map(l => l.key) }, lastSentAt: { $exists: true } }).toArray()).map(d => d.key));
+    const pending = locks.filter(l => !done.has(l.key)).map(l => l.a);
+    if (!pending.length) return { ok: true, sent: 0, failed: 0, skipped: 0, results: [], missing: [] };
+    const hasFindings = a => !(a.findingRefs || []).length || findings.some(f => f && (a.findingRefs || []).includes(f.ref));
+    ready = pending.filter(hasFindings);
+    if (ready.length === pending.length || Date.now() - started >= waitMs) break;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  if (!ready.length) return { ok: true, sent: 0, failed: 0, skipped: 0, results: [], missing: [] };
+  return sendAuditSubmissionEmails({ auditIds: ready.map(a => String(a.id || a.ref)), by });
+}
 
 // ── MANUAL NC REMINDER (CAPA "Remind" button) ────────
 // One reminder to the department SPOC for a single NC, using the delayed (overdue) or upcoming
@@ -642,4 +693,4 @@ async function sendNcReminder(options = {}) {
   }
 }
 
-module.exports = { sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, classify, classifyAll, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };
+module.exports = { sendDueAuditSubmissionEmails, sendNcReminder, sendAuditSubmissionEmails, runEmailAutomation, workflowStatus, classify, classifyAll, recipientsFor, splitEmails, todayYmd, ymdToMs, mergeRules, EMAIL_RULES_DEFAULTS };

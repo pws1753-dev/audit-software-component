@@ -7,7 +7,7 @@ import {
   latestDeptAuditInMonth, frozenAuditScore, findingRaisedDate, findingClosedDate,
   cumulativeClosureRateAt, closureTrendDeptHasData, deptHasAuditInYear,
   latestDeptAuditScore, clauseName, clauseDescription, auditScoreColorVar, filterFindingsByDateRange,
-  findingMatchesDeptCode, deptValuesMatch,
+  findingMatchesDeptCode, deptValuesMatch, dedupeDeptAliases,
 } from '../utils/dashboardHelpers';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -27,7 +27,7 @@ export default function Analytics({ dateFrom, dateTo }) {
   }, [allFindings, allDepts, dateFrom, dateTo, isSpoc, sDept]);
 
   const trendFindings = useMemo(() => (isSpoc ? allFindings.filter(f => findingMatchesDeptCode(allDepts, f, sDept)) : allFindings), [allFindings, allDepts, isSpoc, sDept]);
-  const depts = useMemo(() => (isSpoc ? allDepts.filter(d => deptValuesMatch(allDepts, d.code, sDept) || deptValuesMatch(allDepts, d.name, sDept)) : allDepts), [allDepts, isSpoc, sDept]);
+  const depts = useMemo(() => dedupeDeptAliases(isSpoc ? allDepts.filter(d => deptValuesMatch(allDepts, d.code, sDept) || deptValuesMatch(allDepts, d.name, sDept)) : allDepts, allFindings, completed), [allDepts, isSpoc, sDept, allFindings, completed]);
 
   const closed = F.filter(f => f.status === 'closed').length;
   const capaRate = closureRate(F);
