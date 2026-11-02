@@ -360,7 +360,7 @@ export default function EmailCenter() {
               </div>
             </div>
             <div className="mt-2">
-              <label className="form-label">Send on day of the month (1-28)</label>
+              <label className="form-label">Send on day of the month (1-28; first week, days 1-7, recommended)</label>
               <input type="number" min={1} max={28} style={{ width: 90 }} value={rules.summaryDay || 1} onChange={e => patch({ summaryDay: Math.max(1, Math.min(28, Number(e.target.value) || 1)) })} />
               <div className="text-[10px] mt-1" style={{ color: 'var(--text3)' }}>Covers the previous month. If the portal could not send it that day, it goes out at the next daily run.</div>
             </div>
