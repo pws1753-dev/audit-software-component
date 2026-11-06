@@ -265,6 +265,20 @@ export default function EmailCenter() {
                                 <div className="text-[9px] mt-1" style={{ color: 'var(--text3)' }}>Added to CC on every automatic email for this department.</div>
                               </div>
                               <div>
+                                <label className="form-label">Never email or CC in {r.code} (comma separated)</label>
+                                <input
+                                  defaultValue={(r.rule.excludeCc || []).join(', ')}
+                                  placeholder="person@onepws.com"
+                                  onBlur={e => {
+                                    const list = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                                    const bad = list.filter(x => !isValidEmail(x));
+                                    if (bad.length) { showToast('Invalid: ' + bad.join(', ')); return; }
+                                    patchDept(r.code, { excludeCc: list }, list.length ? 'These addresses are removed from ' + r.code + ' emails' : 'Exclusions cleared for ' + r.code);
+                                  }}
+                                />
+                                <div className="text-[9px] mt-1" style={{ color: 'var(--text3)' }}>Removed from every automatic email of this department only, even if they are on the global CC list.</div>
+                              </div>
+                              <div>
                                 <label className="form-label">Override To (leave blank to use the SPOC)</label>
                                 <input
                                   defaultValue={(r.rule.overrideTo || []).join(', ')}

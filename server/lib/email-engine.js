@@ -461,7 +461,9 @@ async function runEmailAutomation(options = {}) {
 // overrides, minus the Never-Email list. Shared by the one-off emails below.
 function resolveDeptRecipients(ctx, deptCode, bucket, { auditorName = '', rows = [] } = {}) {
   const { depts, emailMaster, users, auditors, globalCc, rules } = ctx;
-  const suppressed = new Set(splitEmails((rules.suppressed || []).join(',')).map(e => e.toLowerCase()));
+  // Never-Email list (everywhere) plus this department's own "never email / CC" list.
+  const deptRule = rules.depts[deptCode] || {};
+  const suppressed = new Set(splitEmails([...(rules.suppressed || []), ...(Array.isArray(deptRule.excludeCc) ? deptRule.excludeCc : [])].join(',')).map(e => e.toLowerCase()));
   const strip = list => list.filter(e => !suppressed.has(e.toLowerCase()));
   const matching = emailMaster.filter(m => deptMatches(depts, m.deptCode, deptCode) || deptMatches(depts, m.department, deptCode));
   const master = matching.find(m => String(m.status || 'active').toLowerCase() !== 'inactive') || null;
