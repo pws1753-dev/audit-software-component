@@ -59,7 +59,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
     let rows = [];
     if (tab === 'findings') rows = data.map(f => ({ ID: f.ref, Dept: f.deptName, Desc: f.desc, Sev: SEV_LABEL[f.sev], Clause: f.clause, Due: f.due, Status: STAT_LABEL[f.status] }));
     else if (tab === 'capa') rows = data.map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Due: f.due, Status: STAT_LABEL[f.status] }));
-    else rows = data.map(l => ({ Title: l.title, Dept: l.dept || 'All', Clause: l.clause, Sev: SEV_LABEL[l.sev], 'Root Cause': l.rc, 'Preventive Action': l.pa }));
+    else rows = data.map(l => ({ Title: l.title, Dept: l.dept || 'All', 'Problem Description': l.clause, Sev: SEV_LABEL[l.sev], 'Root Cause': l.rc, 'Preventive Action': l.pa }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), tab);
     XLSX.writeFile(wb, `OnePWS_${tab}_${Date.now()}.xlsx`);
@@ -74,7 +74,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(all.map(f => ({ ID: f.ref, Department: f.deptName, Description: f.desc, Severity: SEV_LABEL[f.sev] || f.sev, Clause: f.clause, DueDate: f.due, Status: STAT_LABEL[f.status] || f.status, Type: f.type || '', AuditRef: f.auditRef || '' }))), 'All Findings');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(all.filter(f => f.status !== 'closed').map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Severity: SEV_LABEL[f.sev], Due: f.due, Status: STAT_LABEL[f.status], ClosureEvidence: f.closureEvidence || '' }))), 'Open CAPA');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(getLearnings().map(l => ({ Title: l.title, Dept: l.dept || 'All', Clause: l.clause, Severity: SEV_LABEL[l.sev], 'Root Cause': l.rc, 'Preventive Action': l.pa }))), 'Learnings');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(getLearnings().map(l => ({ Title: l.title, Department: l.dept || 'All', Severity: SEV_LABEL[l.sev], 'Problem Description': l.clause, 'Root Cause': l.rc, 'Preventive Action': l.pa }))), 'Learnings');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(getCompletedAudits().map(a => ({ Ref: a.ref || '', Department: a.deptName || '', Auditor: a.auditor || '', Date: a.date || '', Type: a.type || '', Standards: (a.standards || []).join(', '), SubmittedAt: a.submittedAt || '', Findings: (a.findingRefs || []).length }))), 'Completed Audits');
     XLSX.writeFile(wb, 'OnePWS_MasterTracker_Full_' + Date.now() + '.xlsx');
     showToast('Full Master Tracker exported');
@@ -100,7 +100,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
     let head = [], rows = [];
     if (tab === 'findings') { head = [['ID', 'Dept', 'Description', 'Severity', 'Status']]; rows = data.map(f => [f.ref, f.deptName, f.desc, SEV_LABEL[f.sev], STAT_LABEL[f.status]]); }
     else if (tab === 'capa') { head = [['Ref', 'Dept', 'Issue', 'Status', 'Due']]; rows = data.map(f => [f.ref, f.deptName, f.desc, STAT_LABEL[f.status], f.due]); }
-    else { head = [['Title', 'Dept', 'Clause', 'Severity']]; rows = data.map(l => [l.title, l.dept || 'All', l.clause, SEV_LABEL[l.sev]]); }
+    else { head = [['Title', 'Dept', 'Problem Description', 'Severity']]; rows = data.map(l => [l.title, l.dept || 'All', l.clause, SEV_LABEL[l.sev]]); }
     doc.autoTable({ startY: 26, head, body: rows, styles: { fontSize: 8 }, headStyles: { fillColor: [192, 57, 43], textColor: 255 }, margin: { left: 14, right: 14 } });
     doc.save(`OnePWS_${tab}_${Date.now()}.pdf`);
     showToast('PDF exported');
@@ -161,7 +161,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
           )}
           {tab === 'learnings' && (
             <table>
-              <thead><tr><th>Title</th><th>Dept</th><th>Clause</th><th>Severity</th><th>Root Cause</th><th>Preventive Action</th></tr></thead>
+              <thead><tr><th>Title</th><th>Dept</th><th>Problem Description</th><th>Severity</th><th>Root Cause</th><th>Preventive Action</th></tr></thead>
               <tbody>
                 {paged.length === 0 ? (
                   <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text3)', padding: 12 }}>No learnings recorded</td></tr>
@@ -169,7 +169,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
                   <tr key={l.id}>
                     <td className="font-bold">{l.title}</td>
                     <td>{l.dept || 'All'}</td>
-                    <td><Badge type="b-blue">{l.clause || '—'}</Badge></td>
+                    <td style={{ maxWidth: 180, fontSize: 11 }}>{l.clause || '—'}</td>
                     <td><Badge type={SEV_BADGE[l.sev] || 'b-gray'}>{SEV_LABEL[l.sev] || l.sev}</Badge></td>
                     <td style={{ maxWidth: 140, fontSize: 11 }}>{l.rc}</td>
                     <td style={{ maxWidth: 140, fontSize: 11 }}>{l.pa}</td>
