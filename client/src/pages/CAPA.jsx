@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import FindingTextarea from '../components/FindingTextarea';
 import { Card, Badge, Icon, EvidenceUploader } from '../components/UI';
 import { apiFetch } from '../utils/api';
 import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today, sanitize, findingWorkflowStatus, mediaUrl, isImageMedia } from '../utils/helpers';
@@ -370,14 +371,14 @@ export default function CAPA({ dateFrom, dateTo }) {
       {/* Edit finding modal */}
       {editModal && (
         <div className="modal-bg" onClick={() => setEditModal(null)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
+          <div className="modal-box wide" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><span>Edit Finding</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setEditModal(null)}><Icon name="x" /></button></div>
             <div className="grid grid-cols-2 gap-2 mb-2">
               <div><label className="form-label">Severity</label><select value={editModal.sev || 'major'} onChange={e => setEditModal(p => ({ ...p, sev: e.target.value }))}>{['critical', 'major', 'minor', 'obs'].map(s => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select></div>
               <div><label className="form-label">Clause</label><input value={editModal.clause || ''} onChange={e => setEditModal(p => ({ ...p, clause: e.target.value }))} /></div>
             </div>
             <div className="mb-2"><label className="form-label">Due Date</label><input type="date" value={editModal.due || ''} onChange={e => setEditModal(p => ({ ...p, due: e.target.value }))} /></div>
-            <div className="mb-3"><label className="form-label">Description</label><textarea value={editModal.desc || ''} onChange={e => setEditModal(p => ({ ...p, desc: e.target.value }))} style={{ height: 76, resize: 'none' }} /></div>
+            <div className="mb-3"><label className="form-label">Description</label><FindingTextarea aria-label="Finding Description" value={editModal.desc || ''} onChange={e => setEditModal(p => ({ ...p, desc: e.target.value }))} /><div className="text-xs" style={{ color: 'var(--text3)' }}>The box grows as you type. Drag the bottom-right corner to resize it.</div></div>
             <div className="flex gap-2"><button className="btn btn-ghost flex-1" onClick={() => setEditModal(null)}>Cancel</button><button className="btn btn-primary flex-1" onClick={saveEdit}>Save</button></div>
           </div>
         </div>

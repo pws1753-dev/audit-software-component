@@ -502,6 +502,10 @@ export function managerDeptCodes(user, depts, emailMaster) {
   if (!user) return [];
   const role = user.role;
   if (role === 'admin' || role === 'auditor') return (depts || []).map(d => d.code);
+  if (role === 'manager' && user.accessScope === 'businessUnit') {
+    const units = new Set((user.businessUnits || []).map(v => String(v).trim().toLowerCase()));
+    return (depts || []).filter(d => units.has(String(d.businessUnit || '').trim().toLowerCase())).map(d => d.code);
+  }
   const codes = new Set();
   if (user.dept) codes.add(user.dept);
   (emailMaster || []).forEach(r => {

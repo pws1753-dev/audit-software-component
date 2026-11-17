@@ -55,6 +55,7 @@ export function AppProvider({ children }) {
   const syncPollTimer = useRef(null);
   const pollDeferred = useRef(false);
   const syncRemoteMeta = useRef({});
+  const syncAccessVersion = useRef('');
   const syncWriteTimers = useRef({});
   const apiReadyRef = useRef(false);
 
@@ -132,6 +133,10 @@ export function AppProvider({ children }) {
     apiReadyRef.current = false;
     setSyncStatus('connecting');
     setSyncData({});
+    syncAccessVersion.current = '';
+    syncRemoteMeta.current = {};
+    Object.values(syncWriteTimers.current).forEach(clearTimeout);
+    syncWriteTimers.current = {};
     setNotifications([]);
     setFindingsDeptFilter('');
     setCapaSelectedId('');
@@ -168,6 +173,8 @@ export function AppProvider({ children }) {
       apiReadyRef.current = true;
       const payload = await apiFetch('/api/sync');
       const cloud = payload.data || {};
+      syncAccessVersion.current = payload.accessVersion || '';
+      if (payload.user) setCurrentUser(payload.user);
       const next = {};
       DATA_KEYS.forEach(k => {
         if (cloud[k] && Object.prototype.hasOwnProperty.call(cloud[k], 'value')) {
@@ -199,6 +206,36 @@ export function AppProvider({ children }) {
     if (document.hidden) { pollDeferred.current = true; return; }
     try {
       const payload = await apiFetch('/api/sync?manifest=1');
+      if (payload.throttled) { schedulePoll(); return; }
+      if (payload.accessVersion && payload.accessVersion !== syncAccessVersion.current) {
+        // Assignment changes replace the entire view; merging would retain findings
+        // that were just removed from this user's permitted Business Units.
+        Object.values(syncWriteTimers.current).forEach(clearTimeout);
+        syncWriteTimers.current = {};
+        const full = await apiFetch('/api/sync');
+        const next = {};
+        syncRemoteMeta.current = {};
+        DATA_KEYS.forEach(k => {
+          if (full.data?.[k]) {
+            next[k] = applyIncoming(k, full.data[k].value);
+            syncRemoteMeta.current[k] = full.data[k].updatedAt || '';
+          }
+        });
+        setSyncData(next);
+        setNotifications(full.data?.ap_notifs?.value || []);
+        setPerms(loadPermissions(full.data?.ap_permissions?.value));
+        if (full.user) setCurrentUser(full.user);
+        syncAccessVersion.current = full.accessVersion || '';
+        setCapaSelectedId('');
+        setFindingsDeptFilter('');
+        setActiveAudit(null);
+        setAuditSession(EMPTY_SESSION);
+        // Close any page-local editor or report preview holding the previous scope.
+        setCurrentPage('dashboard');
+        setSyncStatus('synced');
+        schedulePoll();
+        return;
+      }
       const manifest = payload.data || {};
       const changedKeys = Object.keys(manifest).filter(k =>
         SYNC_KEYS.includes(k) && k !== 'ap_local_storage_backup' &&
@@ -213,7 +250,7 @@ export function AppProvider({ children }) {
             else if (k === 'ap_permissions') { setPerms(loadPermissions(r.value)); }
             else if (DATA_KEYS.includes(k)) {
               let val = r.value;
-              if (k === 'ap_finds') val = mergeFindingsForSync(prev.ap_finds, val);
+              if (k === 'ap_finds' && payload.user?.accessScope !== 'businessUnit') val = mergeFindingsForSync(prev.ap_finds, val);
               next[k] = applyIncoming(k, val);
             }
             syncRemoteMeta.current[k] = manifest[k]?.updatedAt || '';
@@ -324,13 +361,22 @@ export function AppProvider({ children }) {
 
   const navigate = useCallback((page) => setCurrentPage(page), []);
 
+  const addInternalCheckpoint = useCallback(async question => {
+    const result = await apiFetch('/api/sync/internal-checkpoint', { method: 'POST', body: JSON.stringify(question) });
+    setSyncData(prev => {
+      const checkpoints = prev.ap_cps || [];
+      return { ...prev, ap_cps: checkpoints.some(cp => cp.id === result.checkpoint.id) ? checkpoints : [...checkpoints, result.checkpoint] };
+    });
+    return result;
+  }, []);
+
   const value = useMemo(() => ({
     currentUser, setCurrentUser, login, logout, authChecked,
     syncStatus, apiReady,
     perms, setPerms,
     currentPage, navigate,
     notifications, setNotifications, pendingCount, addNotification,
-    writeSyncKey, writeSyncBulk,
+    writeSyncKey, writeSyncBulk, addInternalCheckpoint,
     canAccess,
     findingsDeptFilter, setFindingsDeptFilter,
     capaSelectedId, setCapaSelectedId,
@@ -348,7 +394,7 @@ export function AppProvider({ children }) {
     perms,
     currentPage, navigate,
     notifications, pendingCount, addNotification,
-    writeSyncKey, writeSyncBulk,
+    writeSyncKey, writeSyncBulk, addInternalCheckpoint,
     canAccess,
     findingsDeptFilter,
     capaSelectedId,

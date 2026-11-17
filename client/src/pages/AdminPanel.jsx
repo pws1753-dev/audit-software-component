@@ -4,6 +4,7 @@ import { Card, Badge, Tabs, ConfirmModal, Icon } from '../components/UI';
 import { ROLE_BADGE, ROLE_LABELS, showToast, genId, loadPermissions } from '../utils/helpers';
 import { CAPA_DUE_DEFAULTS } from '../utils/auditEngine';
 import { apiFetch } from '../utils/api';
+import { businessUnitOptions } from '../utils/businessUnits';
 
 const PAGE_LABELS = {
   dashboard: 'Executive Dashboard', analytics: 'Analytics & Insights', planning: 'Audit Planning',
@@ -85,11 +86,16 @@ export default function AdminPanel() {
   const handleSave = () => {
     if (!editItem.loginId || !editItem.role) { showToast('Please fill all required fields'); return; }
     if (editItem.role === 'spoc' && !editItem.dept) { showToast('Select a department for the Dept SPOC'); return; }
+    if (editItem.role === 'manager' && editItem.accessScope === 'businessUnit' && !editItem.businessUnits?.length) { showToast('Select at least one Business Unit for the Business Unit Head'); return; }
     if (!editItem.id && !editItem.password) { showToast('Password required for new user'); return; }
     const current = getUsers();
     const conflict = current.find(u => u.loginId === editItem.loginId && u.id !== editItem.id);
     if (conflict) { showToast('Login ID already exists'); return; }
     const payload = { ...editItem };
+    if (payload.role !== 'manager' || payload.accessScope !== 'businessUnit') {
+      payload.accessScope = 'legacy';
+      payload.businessUnits = [];
+    }
     if (!payload.password) delete payload.password;
     const updated = editItem.id
       ? current.map(u => u.id === editItem.id ? { ...u, ...payload } : u)
@@ -244,7 +250,7 @@ export default function AdminPanel() {
               <table>
                 <thead>
                   <tr>
-                    <th>Login ID</th><th>Name</th><th>Role</th><th>Dept</th><th>Email</th><th>Status</th><th>Actions</th>
+                    <th>Login ID</th><th>Name</th><th>Role</th><th>Business Unit</th><th>Dept</th><th>Email</th><th>Status</th><th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -252,7 +258,8 @@ export default function AdminPanel() {
                     <tr key={u.id}>
                       <td className="font-bold">{u.loginId}</td>
                       <td>{u.name}</td>
-                      <td><Badge type={ROLE_BADGE[u.role]}>{ROLE_LABELS[u.role] || u.role}</Badge></td>
+                      <td><Badge type={ROLE_BADGE[u.role]}>{u.role === 'manager' && u.accessScope === 'businessUnit' ? 'Business Unit Head' : ROLE_LABELS[u.role] || u.role}</Badge></td>
+                      <td>{u.role === 'manager' && u.accessScope === 'businessUnit' ? (u.businessUnits || []).join(', ') || 'Unassigned' : getDepts().find(d => d.code === u.dept)?.businessUnit || 'Unassigned'}</td>
                       <td>{u.dept || '—'}</td>
                       <td>{u.email}</td>
                       <td><Badge type={u.active !== false ? 'b-green' : 'b-gray'}>{u.active !== false ? 'Active' : 'Inactive'}</Badge></td>
@@ -378,6 +385,20 @@ export default function AdminPanel() {
                 </select>
               </div>
             </div>
+            {editItem.role === 'manager' && <div className="mb-3">
+              <label className="form-label" htmlFor="manager-access-scope">Manager Access</label>
+              <select id="manager-access-scope" value={editItem.accessScope || 'legacy'} onChange={e => setEditItem(p => ({ ...p, accessScope: e.target.value }))}>
+                <option value="legacy">Existing Manager Access</option>
+                <option value="businessUnit">Business Unit Head (assigned units only)</option>
+              </select>
+              {editItem.accessScope === 'businessUnit' && <fieldset className="mt-2">
+                <legend className="form-label">Assigned Business Units *</legend>
+                <div className="flex flex-wrap gap-3">{businessUnitOptions(getDepts(), users).map(unit => <label key={unit} className="flex items-center gap-1 text-xs">
+                  <input type="checkbox" style={{ width: 'auto' }} checked={(editItem.businessUnits || []).some(v => v.toLowerCase() === unit.toLowerCase())} onChange={e => setEditItem(p => ({ ...p, businessUnits: e.target.checked ? [...(p.businessUnits || []), unit] : (p.businessUnits || []).filter(v => v.toLowerCase() !== unit.toLowerCase()) }))} />{unit}
+                </label>)}</div>
+                <p className="text-xs mt-2" style={{ color: 'var(--text3)' }}>Only findings and audits from departments linked to these units will be visible across the portal. Link departments in Master Data. Add other units by entering their name on a department.</p>
+              </fieldset>}
+            </div>}
             <div className="mb-2"><label className="form-label">Email *</label><input value={editItem.email} onChange={e => setEditItem(p => ({ ...p, email: e.target.value }))} placeholder="user@company.com" /></div>
             <div className="mb-3">
               <label className="form-label">{editItem.id ? 'Password (leave blank to keep current)' : 'Password *'}</label>

@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const { wrapAsync, requireRoles, actorOf } = require('../middleware/auth');
 const { getCollection } = require('../lib/mongo');
+const { businessUnitAccess } = require('../lib/business-unit-access');
 const { getCloudinaryConfig, getCloudinaryEndpoint, cloudinarySignature, cloudinaryPostMultipart, mediaTypeFromUpload, destroyCloudinaryAsset } = require('../lib/cloudinary');
 
 const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
@@ -81,10 +82,12 @@ router.get('/status', wrapAsync(async (_req, res) => {
   res.json({ ok: true, configured, cloudName: configured ? cfg.cloudName : null });
 }));
 
-router.get('/list', wrapAsync(async (_req, res) => {
+router.get('/list', wrapAsync(async (req, res) => {
   const collection = await getCollection();
   const row = await collection.findOne({ key: 'ap_media_library' });
-  const items = Array.isArray(row && row.value) ? row.value : [];
+  const departments = await collection.findOne({ key: 'ap_depts' });
+  const access = businessUnitAccess(req.authUser, departments?.value);
+  const items = access.filter('ap_media_library', Array.isArray(row && row.value) ? row.value : []);
   res.json({ ok: true, items, count: items.length });
 }));
 

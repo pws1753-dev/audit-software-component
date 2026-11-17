@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Tabs, Badge, ConfirmModal, Icon, Pagination } from '../components/UI';
 import { showToast, genId } from '../utils/helpers';
+import { businessUnitOptions } from '../utils/businessUnits';
 
 const CP_PAGE_SIZE = 15;
 
@@ -43,9 +44,10 @@ export default function MasterData() {
     if (tab === 'cps' && !editItem.text?.trim()) { showToast('Question text required'); return; }
     if (tab === 'auds' && !editItem.name?.trim()) { showToast('Name required'); return; }
     const current = listFor(tab);
+    const payload = tab === 'depts' ? { ...editItem, businessUnit: (editItem.businessUnit || '').trim() } : editItem;
     const updated = editItem.id
-      ? current.map(item => item.id === editItem.id ? { ...item, ...editItem } : item)
-      : [...current, { ...editItem, id: genId(tab), ...(tab === 'auds' ? { auditsYTD: 0 } : {}), ...(tab === 'depts' ? { lastAudit: '—' } : {}) }];
+      ? current.map(item => item.id === editItem.id ? { ...item, ...payload } : item)
+      : [...current, { ...payload, id: genId(tab), ...(tab === 'auds' ? { auditsYTD: 0 } : {}), ...(tab === 'depts' ? { lastAudit: '—' } : {}) }];
     writeSyncKey(storageKeyFor(tab), updated, currentUser?.loginId);
     setEditItem(null);
     showToast('Record saved successfully');
@@ -106,11 +108,11 @@ export default function MasterData() {
           </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Code</th><th>Name</th><th>SPOC</th><th>Risk</th><th>Freq</th><th>Last Audit</th>{canEdit && <th>Actions</th>}</tr></thead>
+              <thead><tr><th>Code</th><th>Name</th><th>Business Unit</th><th>SPOC</th><th>Risk</th><th>Freq</th><th>Last Audit</th>{canEdit && <th>Actions</th>}</tr></thead>
               <tbody>
                 {depts.map(d => (
                   <tr key={d.id}>
-                    <td className="font-bold">{d.code}</td><td>{d.name}</td><td>{d.spoc || '—'}</td>
+                    <td className="font-bold">{d.code}</td><td>{d.name}</td><td>{d.businessUnit || 'Unassigned'}</td><td>{d.spoc || '—'}</td>
                     <td><Badge type={d.risk === 'High' ? 'b-red' : d.risk === 'Low' ? 'b-green' : 'b-amber'}>{d.risk || 'Medium'}</Badge></td>
                     <td>{d.freq || 4}/yr</td><td>{d.lastAudit || '—'}</td>
                     {canEdit && <td><div className="flex gap-1">
@@ -245,6 +247,7 @@ export default function MasterData() {
                   <div><label className="form-label">Department Name</label><input value={editItem.name} onChange={e => setEditItem(p => ({ ...p, name: e.target.value }))} /></div>
                   <div><label className="form-label">Code</label><input value={editItem.code} onChange={e => setEditItem(p => ({ ...p, code: e.target.value }))} /></div>
                 </div>
+                <div className="mb-2"><label className="form-label" htmlFor="department-business-unit">Business Unit</label><input id="department-business-unit" list="department-business-units" value={editItem.businessUnit || ''} onChange={e => setEditItem(p => ({ ...p, businessUnit: e.target.value }))} placeholder="Select or enter a Business Unit" /><datalist id="department-business-units">{businessUnitOptions(depts).map(unit => <option key={unit} value={unit} />)}</datalist><div className="text-xs mt-1" style={{ color: 'var(--text3)' }}>Linked findings and audits are visible to this Business Unit's assigned heads. Unassigned departments are hidden from Business Unit Heads.</div></div>
                 <div className="mb-2"><label className="form-label">SPOC</label><input value={editItem.spoc || ''} onChange={e => setEditItem(p => ({ ...p, spoc: e.target.value }))} /></div>
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div><label className="form-label">Risk Level</label>

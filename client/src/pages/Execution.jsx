@@ -1,8 +1,10 @@
 import { notifyAuditSubmitted } from '../utils/auditMail';
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import FindingTextarea from '../components/FindingTextarea';
 import { Card, Badge, Icon, EvidenceUploader } from '../components/UI';
-import { showToast, SEV_BADGE, SEV_LABEL, fmtDate, mediaUrl, isImageMedia } from '../utils/helpers';
+import { showToast, SEV_BADGE, SEV_LABEL, fmtDate, mediaUrl, isImageMedia, genId } from '../utils/helpers';
+import { searchAuditQuestions } from '../utils/executionQuestions';
 import { auditFindingCounts, auditScore, sessionAuditFindingEntries, sessionAuditFindingRows } from '../utils/dashboardHelpers';
 import { STD_META, CAPA_DUE_DEFAULTS, EMPTY_SESSION } from '../utils/auditEngine';
 
@@ -13,7 +15,7 @@ function Stars({ n }) {
 export default function Execution() {
   const {
     getPlannedAudits, getCompletedAudits, getRootCauses, getAuditDrafts, getCapaDue, getFindings,
-    writeSyncKey, currentUser, navigate, setPageAction,
+    writeSyncKey, addInternalCheckpoint, currentUser, navigate, setPageAction,
     activeAudit: audit, setActiveAudit: setAuditState, auditSession: session, setAuditSession: setSession,
   } = useApp();
   const role = currentUser?.role;
@@ -21,7 +23,14 @@ export default function Execution() {
   const [findingModal, setFindingModal] = useState(null);
   const [ff, setFf] = useState({ sev: 'major', desc: '', cont: '', rc: '', files: [] });
   const [addQ, setAddQ] = useState(null);
+  const [addingQuestion, setAddingQuestion] = useState(false);
+  const [questionSearch, setQuestionSearch] = useState('');
   const restoredRef = useRef(false);
+
+  useEffect(() => {
+    setQuestionSearch('');
+    setCurSec(0);
+  }, [audit?.id]);
 
   const draftUserKey = () => String(currentUser?.id || currentUser?.loginId || currentUser?.name || '').trim();
 
@@ -164,6 +173,8 @@ export default function Execution() {
   const skipped = allQ.filter(q => session.answers[q.id] === 'skip').length;
   const findsCount = sessionAuditFindingRows(session, audit).length;
   const pct = allQ.length ? Math.round(answered / allQ.length * 100) : 0;
+  const searching = !!questionSearch.trim();
+  const questionRows = searching ? searchAuditQuestions(secs, questionSearch) : (sec?._checkpoints || []).map(question => ({ question, section: sec, sectionIndex: curSec }));
 
   const doAns = (qId, ans) => {
     setSession(s => ({ ...s, answers: { ...s.answers, [qId]: ans } }));
@@ -192,6 +203,7 @@ export default function Execution() {
   const markNA = () => setSession(s => { const a = { ...s.answers }; (sec._checkpoints || []).forEach(q => { if (!a[q.id]) a[q.id] = 'na'; }); return { ...s, answers: a }; });
   const clearSec = () => setSession(s => { const a = { ...s.answers }; (sec._checkpoints || []).forEach(q => { delete a[q.id]; }); return { ...s, answers: a }; });
   const jumpUnanswered = () => {
+    setQuestionSearch('');
     for (let i = 0; i < secs.length; i++) {
       if ((secs[i]._checkpoints || []).some(q => !session.answers[q.id])) { setCurSec(i); showToast(`Jumped to ${STD_META[secs[i].stdId]?.short || secs[i].title}`); return; }
     }
@@ -242,11 +254,37 @@ export default function Execution() {
     navigate('reports');
   };
 
-  const saveAddQ = () => {
+  const openAddQuestion = () => setAddQ({ text: '', clause: '', weight: 3, tip: '', sectionId: sec.id });
+  const saveAddQ = async () => {
+    if (addingQuestion) return;
     if (!addQ.text.trim()) { showToast('Question text required'); return; }
-    const newCp = { id: 'custom_' + Date.now(), text: addQ.text.trim(), clause: addQ.clause.trim() || 'Custom', weight: Number(addQ.weight) || 3, type: 'Yes/No', tip: addQ.tip.trim(), aiSuggestion: '', dept: audit.dept, standard: 'custom' };
-    const next = { ...audit, sections: secs.map((s, i) => i === curSec ? { ...s, _checkpoints: [...(s._checkpoints || []), newCp], cpIds: [...(s.cpIds || []), newCp.id] } : s) };
-    setActive(next); setAddQ(null); showToast('Custom question added');
+    const target = secs.find(s => s.id === addQ.sectionId);
+    if (!target) { showToast('This audit section is no longer available'); return; }
+    const weight = Number(addQ.weight);
+    if (!Number.isInteger(weight) || weight < 1 || weight > 5) { showToast('Weight must be a whole number from 1 to 5'); return; }
+    const internal = target.stdId === 'internal';
+    const newCp = { id: genId('custom'), text: addQ.text.trim(), clause: addQ.clause.trim() || (internal ? 'Internal' : 'Custom'), weight, type: 'Yes/No', tip: addQ.tip.trim(), aiSuggestion: '', dept: audit.dept, standard: internal ? 'internal' : 'custom' };
+    setAddingQuestion(true);
+    try {
+      if (internal) {
+        // Confirm the library save before adding the session copy, so a failed
+        // database request leaves the form available for a safe retry.
+        const result = await addInternalCheckpoint(newCp);
+        newCp.sourceId = result.checkpoint.id;
+      }
+      const normalize = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const duplicate = (target._checkpoints || []).some(cp =>
+        (newCp.sourceId && cp.sourceId === newCp.sourceId) ||
+        (normalize(cp.text) === normalize(newCp.text) && normalize(cp.clause) === normalize(newCp.clause)));
+      if (duplicate) { setAddQ(null); showToast(internal ? 'Question is already in this section and the Master Library' : 'Question is already in this section'); return; }
+      const next = { ...audit, sections: secs.map(s => s.id === target.id ? { ...s, _checkpoints: [...(s._checkpoints || []), newCp], cpIds: [...(s.cpIds || []), newCp.id] } : s) };
+      setActive(next); setQuestionSearch(''); setAddQ(null);
+      showToast(internal ? 'Question added to this audit and the Master Library' : 'Custom question added');
+    } catch (error) {
+      showToast('Question could not be saved: ' + error.message, 5000);
+    } finally {
+      setAddingQuestion(false);
+    }
   };
 
   const sm = STD_META[sec.stdId] || {};
@@ -266,7 +304,7 @@ export default function Execution() {
           <div className="flex gap-2 flex-wrap items-start">
             <Badge type="b-amber">In Progress</Badge>
             <button className="btn btn-ghost btn-sm" onClick={() => { persistDraft(audit, session); showToast('Draft saved'); }}><Icon name="save" /> Save</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setAddQ({ text: '', clause: '', weight: 3, tip: '' })}><Icon name="plus" /> Add Question</button>
+            <button className="btn btn-ghost btn-sm" onClick={openAddQuestion}><Icon name="plus" /> Add Question</button>
             <button className="btn btn-brand btn-sm" onClick={submit}>Submit Audit</button>
           </div>
         </div>
@@ -284,6 +322,15 @@ export default function Execution() {
 
       <div className="info-box flex items-center gap-2"><Icon name="lightbulb" className="w-4 h-4" /> <span><strong>Free Navigation</strong> — Jump to any section/question freely. Sections are grouped by audit standard.</span></div>
 
+      <div className="card">
+        <label className="form-label" htmlFor="audit-question-search">Search Audit Questions</label>
+        <div className="flex items-center gap-2">
+          <input id="audit-question-search" type="search" value={questionSearch} onChange={e => setQuestionSearch(e.target.value)} placeholder="Search all sections by question, clause or audit tip..." />
+          {searching && <button className="btn btn-ghost btn-sm" onClick={() => setQuestionSearch('')}>Clear Search</button>}
+        </div>
+        <div className="text-[11px] mt-1" style={{ color: 'var(--text3)' }} aria-live="polite">{searching ? `${questionRows.length} matching question(s) across all sections. You can answer questions directly below.` : 'Search covers every question in this audit. Answers and findings are kept when you search.'}</div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Left: sections nav + notes */}
         <div className="space-y-3">
@@ -297,7 +344,7 @@ export default function Execution() {
                 const p = cps.length ? Math.round(ans / cps.length * 100) : 0;
                 const icon = ans === cps.length && cps.length > 0 ? 'circle-check' : ans > 0 ? 'circle-dot' : 'circle';
                 return (
-                  <div key={s.id} className={`secni ${i === curSec ? 'act' : ''}`} onClick={() => setCurSec(i)}>
+                  <div key={s.id} className={`secni ${!searching && i === curSec ? 'act' : ''}`} onClick={() => { setCurSec(i); setQuestionSearch(''); }}>
                     <Icon name={icon} className="w-4 h-4" />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="text-xs font-bold truncate">{m.short || s.clause} Checkpoints</div>
@@ -322,7 +369,7 @@ export default function Execution() {
 
         {/* Right: current section */}
         <div className="lg:col-span-2">
-          <Card>
+          {searching ? <Card title="Search Results"><div className="text-xs">{questionRows.length} matching question(s) across {secs.length} sections</div></Card> : <Card>
             <div className="flex justify-between items-start flex-wrap gap-2">
               <div>
                 <div className="flex gap-2 mb-1 flex-wrap">
@@ -337,20 +384,22 @@ export default function Execution() {
                 <button className="btn btn-ghost btn-sm" onClick={clearSec}>Clear</button>
               </div>
             </div>
-          </Card>
+          </Card>}
 
           <div className="mt-3 space-y-2">
-            {(sec._checkpoints || []).length === 0 ? (
-              <div className="warn-box">No checkpoints.</div>
-            ) : (sec._checkpoints || []).map(q => {
+            {questionRows.length === 0 ? (
+              <div className="warn-box">{searching ? 'No matching questions. Try another keyword or clear the search.' : 'No checkpoints.'}</div>
+            ) : questionRows.map(({ question: q, section, sectionIndex }) => {
+              const questionMeta = STD_META[section.stdId] || {};
               const ans = session.answers[q.id], finding = session.findings[q.id], note = session.notes[q.id] || '';
               let cls = 'cq';
               if (ans === 'yes') cls += ' ay'; else if (ans === 'no') cls += ' an'; else if (ans === 'na') cls += ' ana';
               if (finding) cls += ' hf';
               return (
                 <div key={q.id} className={cls}>
+                  {searching && <div className="flex justify-between items-center gap-2 mb-2"><span className="text-[11px] font-bold">{section.title}</span><button className="btn btn-ghost btn-sm" onClick={() => { setCurSec(sectionIndex); setQuestionSearch(''); }}>Open Section</button></div>}
                   <div className="flex justify-between items-center mb-1">
-                    <span className="badge" style={{ background: sm.bg || 'var(--bg3)', color: sm.color || 'var(--text3)', border: `1px solid ${sm.border || 'var(--border)'}`, fontSize: 9 }}>{q.clause}</span>
+                    <span className="badge" style={{ background: questionMeta.bg || 'var(--bg3)', color: questionMeta.color || 'var(--text3)', border: `1px solid ${questionMeta.border || 'var(--border)'}`, fontSize: 9 }}>{q.clause}</span>
                     <div className="flex items-center gap-2"><Stars n={q.weight} />{q.aiSuggestion ? <Badge type="b-purple">AI</Badge> : null}</div>
                   </div>
                   <div className="text-xs font-bold" style={{ lineHeight: 1.5, marginBottom: 5 }}>{q.text}</div>
@@ -392,22 +441,22 @@ export default function Execution() {
                 </div>
               );
             })}
-            <div className="card" style={{ border: '1px dashed var(--border2)' }}>
-              <button className="btn btn-ghost btn-sm w-full" onClick={() => setAddQ({ text: '', clause: '', weight: 3, tip: '' })}><Icon name="plus" /> Add Custom Question to This Section</button>
-            </div>
+            {!searching && <div className="card" style={{ border: '1px dashed var(--border2)' }}>
+              <button className="btn btn-ghost btn-sm w-full" onClick={openAddQuestion}><Icon name="plus" /> Add Custom Question to This Section</button>
+            </div>}
           </div>
 
-          <div className="flex justify-between mt-2">
+          {!searching && <div className="flex justify-between mt-2">
             <button className="btn btn-ghost btn-sm" onClick={() => setCurSec(c => Math.max(0, c - 1))} disabled={curSec === 0}>‹ Previous</button>
             <button className="btn btn-brand btn-sm" onClick={() => curSec < secs.length - 1 ? setCurSec(c => c + 1) : submit()}>{curSec === secs.length - 1 ? 'Review & Submit' : 'Next Section ›'}</button>
-          </div>
+          </div>}
         </div>
       </div>
 
       {/* Finding modal */}
       {findingModal && (
         <div className="modal-bg" onClick={() => setFindingModal(null)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
+          <div className="modal-box wide" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><span>Log Finding</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setFindingModal(null)}><Icon name="x" /></button></div>
             <div className="mb-2 p-2 rounded text-xs italic" style={{ background: 'var(--bg3)' }}>{findingModal.text}</div>
             <div className="info-box mb-2 text-[11px]">{findingModal.ai}</div>
@@ -425,7 +474,8 @@ export default function Execution() {
               </div>
             </div>
             <div className="mb-2"><label className="form-label">Finding Description *</label>
-              <textarea value={ff.desc} onChange={e => setFf(p => ({ ...p, desc: e.target.value }))} style={{ height: 60, resize: 'none' }} placeholder="Describe what was observed..." />
+              <FindingTextarea aria-label="Finding Description" value={ff.desc} onChange={e => setFf(p => ({ ...p, desc: e.target.value }))} placeholder="Describe what was observed..." />
+              <div className="text-xs" style={{ color: 'var(--text3)' }}>The box grows as you type. Drag the bottom-right corner to resize it.</div>
             </div>
             <div className="mb-3"><label className="form-label">Immediate Correction</label>
               <textarea value={ff.cont} onChange={e => setFf(p => ({ ...p, cont: e.target.value }))} style={{ height: 40, resize: 'none' }} placeholder="What was done on the spot?" />
@@ -441,16 +491,19 @@ export default function Execution() {
 
       {/* Add custom question modal */}
       {addQ && (
-        <div className="modal-bg" onClick={() => setAddQ(null)}>
+        <div className="modal-bg" onClick={() => { if (!addingQuestion) setAddQ(null); }}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <div className="modal-header"><span>Add Custom Question</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setAddQ(null)}><Icon name="x" /></button></div>
+            <div className="modal-header"><span>Add Custom Question</span><button className="btn btn-ghost btn-icon btn-sm" disabled={addingQuestion} onClick={() => setAddQ(null)}><Icon name="x" /></button></div>
+            {secs.find(s => s.id === addQ.sectionId)?.stdId === 'internal' && <div className="info-box mb-2 text-xs">This question will also be saved to the Master Library's Internal Checkpoints for this department and included in future audits.</div>}
+            <fieldset disabled={addingQuestion}>
             <div className="mb-2"><label className="form-label">Question Text *</label><textarea value={addQ.text} onChange={e => setAddQ(p => ({ ...p, text: e.target.value }))} style={{ height: 60, resize: 'none' }} /></div>
             <div className="grid grid-cols-2 gap-2 mb-2">
               <div><label className="form-label">Clause</label><input value={addQ.clause} onChange={e => setAddQ(p => ({ ...p, clause: e.target.value }))} /></div>
               <div><label className="form-label">Weight (1-5)</label><input type="number" min={1} max={5} value={addQ.weight} onChange={e => setAddQ(p => ({ ...p, weight: e.target.value }))} /></div>
             </div>
             <div className="mb-3"><label className="form-label">Audit Tip</label><input value={addQ.tip} onChange={e => setAddQ(p => ({ ...p, tip: e.target.value }))} /></div>
-            <div className="flex gap-2"><button className="btn btn-ghost flex-1" onClick={() => setAddQ(null)}>Cancel</button><button className="btn btn-primary flex-1" onClick={saveAddQ}>Add Question</button></div>
+            <div className="flex gap-2"><button className="btn btn-ghost flex-1" onClick={() => setAddQ(null)}>Cancel</button><button className="btn btn-primary flex-1" onClick={saveAddQ}>{addingQuestion ? 'Saving...' : 'Add Question'}</button></div>
+            </fieldset>
           </div>
         </div>
       )}

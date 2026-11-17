@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import FindingTextarea from '../components/FindingTextarea';
 import { Card, Badge, Pagination, ConfirmModal, Icon } from '../components/UI';
 import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today } from '../utils/helpers';
 import { managerDeptCodes, filterFindingsByDateRange, normalizeAuditSeverity, findingMatchesDeptCode, deptCodeInList } from '../utils/dashboardHelpers';
@@ -153,7 +154,7 @@ export default function Findings({ dateFrom, dateTo }) {
 
       {editItem && (
         <div className="modal-bg" onClick={() => setEditItem(null)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
+          <div className="modal-box wide" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><span>Edit Finding</span><button className="btn btn-ghost btn-icon btn-sm" onClick={() => setEditItem(null)}><Icon name="x" /></button></div>
             <div className="grid grid-cols-2 gap-2 mb-2">
               <div><label className="form-label">Finding No.</label><input value={editItem.ref || ''} onChange={e => setEditItem(p => ({ ...p, ref: e.target.value }))} /></div>
@@ -171,7 +172,7 @@ export default function Findings({ dateFrom, dateTo }) {
               <div><label className="form-label">Clause</label><input value={editItem.clause || ''} onChange={e => setEditItem(p => ({ ...p, clause: e.target.value }))} /></div>
               <div><label className="form-label">Due Date</label><input type="date" value={editItem.due || ''} onChange={e => setEditItem(p => ({ ...p, due: e.target.value }))} /></div>
             </div>
-            <div className="mb-2"><label className="form-label">Description</label><textarea value={editItem.desc || ''} onChange={e => setEditItem(p => ({ ...p, desc: e.target.value }))} style={{ height: 76, resize: 'none' }} /></div>
+            <div className="mb-2"><label className="form-label">Description</label><FindingTextarea aria-label="Finding Description" value={editItem.desc || ''} onChange={e => setEditItem(p => ({ ...p, desc: e.target.value }))} /><div className="text-xs" style={{ color: 'var(--text3)' }}>The box grows as you type. Drag the bottom-right corner to resize it.</div></div>
             <div className="flex gap-2"><button className="btn btn-ghost flex-1" onClick={() => setEditItem(null)}>Cancel</button><button className="btn btn-primary flex-1" onClick={saveEdit}>Save</button></div>
           </div>
         </div>

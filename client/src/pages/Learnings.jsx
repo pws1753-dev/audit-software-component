@@ -32,6 +32,7 @@ export default function Learnings() {
 
   const addLearning = () => {
     if (!form.title.trim()) { showToast('Title required'); return; }
+    if (currentUser?.accessScope === 'businessUnit' && !form.dept) { showToast('Select a department in your assigned Business Units'); return; }
     const item = { id: 'l' + Date.now(), title: form.title.trim(), dept: form.dept, sev: form.sev, clause: form.clause, rc: form.rc, pa: form.pa, repeat: form.repeat, crossDept: form.crossDept };
     writeSyncKey('ap_learns', [item, ...getLearnings()], currentUser?.loginId);
     setForm({ title: '', dept: '', sev: 'major', clause: '', rc: '', pa: '', repeat: false, crossDept: false });
@@ -101,7 +102,7 @@ export default function Learnings() {
         <div className="flex flex-col gap-2">
           <div><label className="form-label">Title *</label><input ref={titleInputRef} placeholder="Learning title..." value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} /></div>
           <div className="grid grid-cols-2 gap-2">
-            <div><label className="form-label">Dept</label><select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}><option value="">All</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
+            <div><label className="form-label">Dept</label><select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}><option value="">{currentUser?.accessScope === 'businessUnit' ? 'Select department' : 'All'}</option>{deptOptions.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}</select></div>
             <div><label className="form-label">Severity</label><select value={form.sev} onChange={e => setForm(p => ({ ...p, sev: e.target.value }))}><option value="critical">Critical</option><option value="major">Major</option><option value="minor">Minor</option><option value="obs">Observation</option></select></div>
           </div>
           <div><label className="form-label">Problem Description</label><textarea style={{ height: 52, resize: 'none' }} placeholder="What went wrong?" value={form.clause} onChange={e => setForm(p => ({ ...p, clause: e.target.value }))} /></div>

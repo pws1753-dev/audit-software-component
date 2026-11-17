@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { getCollection } = require('../lib/mongo');
+const { businessUnitAccess, isBusinessUnitHead } = require('../lib/business-unit-access');
 const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
 const { wrapAsync, requireAdmin, requireRoles, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
@@ -100,6 +101,13 @@ router.post('/template-test', wrapAsync(async (req, res) => {
 // POST /api/email/nc-reminder : the CAPA "Remind" button. One reminder per NC per day.
 router.post('/nc-reminder', wrapAsync(async (req, res) => {
   requireRoles(req, ['admin', 'auditor', 'manager'], 'Only Master Admin, Auditor or Manager can send reminders');
+  if (isBusinessUnitHead(req.authUser)) {
+    const collection = await getCollection();
+    const [departments, findings] = await Promise.all([collection.findOne({ key: 'ap_depts' }), collection.findOne({ key: 'ap_finds' })]);
+    const findingId = String(req.body?.findingId || '').trim();
+    const finding = (findings?.value || []).find(f => String(f.id || '') === findingId || String(f.ref || '') === findingId);
+    if (!businessUnitAccess(req.authUser, departments?.value).allows(finding)) return res.status(403).json({ ok: false, error: 'Finding is outside your assigned Business Units' });
+  }
   const result = await sendNcReminder({ findingId: req.body && req.body.findingId, by: actorOf(req) });
   res.status(result.ok ? 200 : (result.throttled ? 429 : 400)).json(result);
 }));
@@ -126,6 +134,7 @@ router.post('/run', wrapAsync(async (req, res) => {
 
 // POST /api/email/log
 router.post('/log', wrapAsync(async (req, res) => {
+  if (isBusinessUnitHead(req.authUser)) return res.status(403).json({ ok: false, error: 'Business Unit Heads cannot access global email logs' });
   const log = req.body && req.body.log;
   if (!log || typeof log !== 'object') return res.status(400).json({ ok: false, error: 'Email log is required' });
   const collection = await getCollection();

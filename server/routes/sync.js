@@ -1,6 +1,8 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
+const { publicUser } = require('../lib/identity');
 const router = express.Router();
 const { sendDueAuditSubmissionEmails } = require('../lib/email-engine');
 
@@ -15,6 +17,8 @@ async function mailNewAudits(by) {
   } catch (err) { console.error('[AuditPro] Audit report email failed:', err); }
 }
 const { getCollection } = require('../lib/mongo');
+const { businessUnitAccess } = require('../lib/business-unit-access');
+const { addInternalCheckpoint } = require('../lib/internal-checkpoints');
 const { wrapAsync, requireAdmin, requirePageAccess, actorOf, invalidateAuthCaches } = require('../middleware/auth');
 const {
   SYNC_KEYS, assertSyncKey, syncValuesEqual, sanitizeSyncValueForClient,
@@ -86,6 +90,10 @@ router.get('/', wrapAsync(async (req, res) => {
     { key: { $in: SYNC_KEYS.filter(k => k !== 'ap_local_storage_backup') } },
     isManifest ? { projection: { key: 1, updatedAt: 1, updatedBy: 1 } } : undefined
   ).toArray();
+  const departments = isManifest ? await collection.findOne({ key: 'ap_depts' }) : rows.find(row => row.key === 'ap_depts');
+  const access = businessUnitAccess(req.authUser, departments?.value);
+  const user = publicUser(req.authUser);
+  const accessVersion = crypto.createHash('sha256').update(JSON.stringify([user.role, user.accessScope, user.businessUnits, access.scoped ? departments?.updatedAt : null])).digest('hex');
   const findingsRow = rows.find(row => row.key === 'ap_finds');
   const completedRow = rows.find(row => row.key === 'ap_completed_audits');
   if (completedRow && Array.isArray(completedRow.value)) {
@@ -94,11 +102,11 @@ router.get('/', wrapAsync(async (req, res) => {
   if (req.query && (req.query.manifest === '1' || req.query.meta === '1')) {
     const data = {};
     rows.forEach(row => { data[row.key] = { updatedAt: row.updatedAt, updatedBy: row.updatedBy || 'system' }; });
-    return res.json({ ok: true, data, manifest: true });
+    return res.json({ ok: true, data, manifest: true, accessVersion, user });
   }
   const data = {};
-  rows.forEach(row => { data[row.key] = { value: sanitizeSyncValueForClient(row.key, row.value, req.authUser), updatedAt: row.updatedAt, updatedBy: row.updatedBy || 'system' }; });
-  res.json({ ok: true, data });
+  rows.forEach(row => { data[row.key] = { value: sanitizeSyncValueForClient(row.key, access.filter(row.key, row.value), req.authUser), updatedAt: row.updatedAt, updatedBy: row.updatedBy || 'system' }; });
+  res.json({ ok: true, data, accessVersion, user });
 }));
 
 // GET /api/sync/:key
@@ -107,12 +115,14 @@ router.get('/:key', wrapAsync(async (req, res) => {
   assertSyncKey(key);
   const collection = await getCollection();
   const row = await collection.findOne({ key });
+  const departments = await collection.findOne({ key: 'ap_depts' });
+  const access = businessUnitAccess(req.authUser, departments?.value);
   let value = row ? row.value : null;
   if (key === 'ap_completed_audits' && Array.isArray(value)) {
     const findingsRow = await collection.findOne({ key: 'ap_finds' });
     value = repairCompletedAuditScores(value, findingsRow && findingsRow.value);
   }
-  res.json({ ok: true, key, value: row ? sanitizeSyncValueForClient(key, value, req.authUser) : null, updatedAt: row ? row.updatedAt : null });
+  res.json({ ok: true, key, value: row ? sanitizeSyncValueForClient(key, access.filter(key, value), req.authUser) : null, updatedAt: row ? row.updatedAt : null });
 }));
 
 // PUT /api/sync/:key
@@ -125,6 +135,10 @@ router.put('/:key', wrapAsync(async (req, res) => {
   let currentRow = null;
   const loadCurrent = async () => { if (!currentRow) currentRow = await collection.findOne({ key }); return currentRow; };
   await enforceSyncWriteAccess(req, key);
+  const departments = await collection.findOne({ key: 'ap_depts' });
+  const access = businessUnitAccess(req.authUser, departments?.value);
+  if (access.scoped) access.assertWrite(key, incomingValue, (await loadCurrent())?.value);
+  if (access.scoped && key === 'ap_learns') incomingValue = incomingValue.concat(((await loadCurrent())?.value || []).filter(row => !access.allows(row)));
 
   if (key === 'ap_email_logs') {
     const current = await loadCurrent();
@@ -153,6 +167,14 @@ router.put('/:key', wrapAsync(async (req, res) => {
   res.json({ ok: true, key, updatedAt: now });
 }));
 
+// POST /api/sync/internal-checkpoint
+router.post('/internal-checkpoint', wrapAsync(async (req, res) => {
+  await enforceSyncWriteAccess(req, 'ap_cps');
+  const collection = await getCollection();
+  const result = await addInternalCheckpoint(collection, { ...req.body, updatedBy: actorOf(req) });
+  res.json({ ok: true, ...result });
+}));
+
 // POST /api/sync/bulk
 router.post('/bulk', wrapAsync(async (req, res) => {
   const items = (req.body && req.body.items) || {};
@@ -163,6 +185,13 @@ router.post('/bulk', wrapAsync(async (req, res) => {
   const now = new Date();
   const currentRows = new Map();
   const getCurrent = async k => { if (!currentRows.has(k)) currentRows.set(k, await collection.findOne({ key: k })); return currentRows.get(k); };
+  const departments = await getCurrent('ap_depts');
+  const access = businessUnitAccess(req.authUser, departments?.value);
+  // Validate all scoped keys before any write, including bulk requests.
+  if (access.scoped) {
+    for (const k of keys) access.assertWrite(k, items[k], (await getCurrent(k))?.value);
+    if (keys.includes('ap_learns')) items.ap_learns = items.ap_learns.concat(((await getCurrent('ap_learns'))?.value || []).filter(row => !access.allows(row)));
+  }
   for (const k of keys) {
     const cur = await getCurrent(k);
     if (k === 'ap_finds') items[k] = mergeFindingsForSync(cur && cur.value, items[k]);

@@ -4,6 +4,7 @@
   "description": "OnePWS AuditPro MERN Backend",
   "main": "server.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
