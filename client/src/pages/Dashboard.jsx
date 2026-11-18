@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Badge, Card, Icon } from '../components/UI';
 import { fmtDate, SEV_BADGE, SEV_LABEL } from '../utils/helpers';
@@ -21,6 +21,10 @@ import {
   dedupeDeptAliases,
   delayDays
 } from '../utils/dashboardHelpers';
+import { businessUnitOptions, departmentsInBusinessUnit } from '../utils/businessUnits';
+
+const recordMatchesDepartments = (depts, record, scopedDepts) => scopedDepts.some(d =>
+  deptValuesMatch(depts, record?.dept, d.code) || deptValuesMatch(depts, record?.deptName, d.code));
 
 export default function Dashboard({ dateFrom, dateTo }) {
   const {
@@ -33,6 +37,7 @@ export default function Dashboard({ dateFrom, dateTo }) {
     setCapaSelectedId,
     setPageAction
   } = useApp();
+  const [businessUnit, setBusinessUnit] = useState('');
 
   useEffect(() => {
     setPageAction(() => () => navigate('planning'));
@@ -44,44 +49,49 @@ export default function Dashboard({ dateFrom, dateTo }) {
   const depts = getDepts();
   const completed = getCompletedAudits();
 
+  const accessDepts = useMemo(() => {
+    const role = currentUser?.role || 'viewer';
+    const dept = currentUser?.dept || '';
+    return role === 'spoc'
+      ? depts.filter(d => deptValuesMatch(depts, d.code, dept) || deptValuesMatch(depts, d.name, dept))
+      : depts;
+  }, [depts, currentUser]);
+  const unitOptions = useMemo(() => businessUnitOptions(accessDepts, currentUser ? [currentUser] : []), [accessDepts, currentUser]);
+  const scopedDepts = useMemo(() => departmentsInBusinessUnit(accessDepts, businessUnit), [accessDepts, businessUnit]);
+  const scopedFindings = useMemo(() => businessUnit ? rawFindings.filter(record => recordMatchesDepartments(depts, record, scopedDepts)) : rawFindings.filter(f =>
+    (currentUser?.role || 'viewer') !== 'spoc' || findingMatchesDeptCode(depts, f, currentUser?.dept || '')),
+  [rawFindings, businessUnit, scopedDepts, depts, currentUser]);
+  const scopedCompleted = useMemo(() => businessUnit ? completed.filter(record => recordMatchesDepartments(depts, record, scopedDepts)) : completed.filter(a =>
+    (currentUser?.role || 'viewer') !== 'spoc' || deptValuesMatch(depts, a?.dept || a?.deptName, currentUser?.dept || '')),
+  [completed, businessUnit, scopedDepts, depts, currentUser]);
+
   // Filter findings based on date range and currentUser department restriction (for SPOC role)
   const F = useMemo(() => {
-    let list = rawFindings;
+    let list = scopedFindings;
     if (dateFrom) {
       list = list.filter(f => (f.loggedAt || f.createdAt || '') >= dateFrom);
     }
     if (dateTo) {
       list = list.filter(f => (f.loggedAt || f.createdAt || '') <= dateTo + 'T23:59:59');
     }
-    const role = currentUser?.role || 'viewer';
-    const dept = currentUser?.dept || '';
-    if (role === 'spoc') {
-      list = list.filter(f => findingMatchesDeptCode(depts, f, dept));
-    }
     return list;
-  }, [rawFindings, dateFrom, dateTo, currentUser, depts]);
+  }, [scopedFindings, dateFrom, dateTo]);
 
   const open = useMemo(() => F.filter(f => f.status !== 'closed').length, [F]);
 
   const visibleDepts = useMemo(() => {
-    const role = currentUser?.role || 'viewer';
-    const dept = currentUser?.dept || '';
-    let list = depts;
-    if (role === 'spoc') {
-      list = depts.filter(d => deptValuesMatch(depts, d.code, dept) || deptValuesMatch(depts, d.name, dept));
-    }
-    return dedupeDeptAliases(list, rawFindings, completed);
-  }, [depts, currentUser, rawFindings, completed]);
+    return dedupeDeptAliases(scopedDepts, scopedFindings, scopedCompleted);
+  }, [scopedDepts, scopedFindings, scopedCompleted]);
 
   const overallAuditScore = useMemo(() => {
-    return orgLatestAuditScore(completed, rawFindings, visibleDepts);
-  }, [completed, rawFindings, visibleDepts]);
+    return orgLatestAuditScore(scopedCompleted, scopedFindings, visibleDepts);
+  }, [scopedCompleted, scopedFindings, visibleDepts]);
 
   const deptScores = useMemo(() => {
     return visibleDepts.map(d => {
       const df = F.filter(f => findingMatchesDept(depts, f, d));
       const counts = auditFindingCounts(df);
-      const scoreInfo = latestDeptAuditScore(completed, rawFindings, depts, d.code);
+      const scoreInfo = latestDeptAuditScore(scopedCompleted, scopedFindings, depts, d.code);
       const score = scoreInfo && typeof scoreInfo.score === 'number' ? scoreInfo.score : null;
       const closed = df.filter(f => f.status === 'closed').length;
       const inprog = df.filter(f => {
@@ -107,7 +117,7 @@ export default function Dashboard({ dateFrom, dateTo }) {
         code: d.code
       };
     });
-  }, [visibleDepts, F, completed, rawFindings, depts]);
+  }, [visibleDepts, F, scopedCompleted, scopedFindings, depts]);
 
   const sorted = useMemo(() => {
     return [...deptScores].filter(d => d.score !== null).sort((a, b) => b.score - a.score);
@@ -169,12 +179,12 @@ export default function Dashboard({ dateFrom, dateTo }) {
   }, []);
 
   const auditedRows = useMemo(() => {
-    return completedAuditsSorted(completed, rawFindings, depts);
-  }, [completed, rawFindings, depts]);
+    return completedAuditsSorted(scopedCompleted, scopedFindings, depts);
+  }, [scopedCompleted, scopedFindings, depts]);
 
   const matrixDepts = useMemo(() => {
     const auditedCodes = new Set(auditedRows.map(a => String(a && a.dept || '').trim()).filter(Boolean));
-    const list = visibleDepts.filter(d => auditedCodes.has(d.code) || completedAuditsSorted(completed, rawFindings, depts, d.code).length > 0);
+    const list = visibleDepts.filter(d => auditedCodes.has(d.code) || completedAuditsSorted(scopedCompleted, scopedFindings, depts, d.code).length > 0);
     auditedRows.forEach(a => {
       const rec = deptRecordForValue(depts, a && a.dept) || deptRecordForValue(depts, a && a.deptName);
       const row = rec || { code: String((a && a.dept) || (a && a.deptName) || '').trim(), name: String((a && a.deptName) || (a && a.dept) || '').trim() };
@@ -187,7 +197,7 @@ export default function Dashboard({ dateFrom, dateTo }) {
       }
     });
     return list;
-  }, [auditedRows, visibleDepts, completed, rawFindings, depts, currentUser]);
+  }, [auditedRows, visibleDepts, scopedCompleted, scopedFindings, depts, currentUser]);
 
   const ncRows = useMemo(() => {
     return matrixDepts.map(d => {
@@ -242,6 +252,15 @@ export default function Dashboard({ dateFrom, dateTo }) {
 
   return (
     <div className="space-y-4">
+      <Card>
+        <div className="flex justify-between items-center gap-3 flex-wrap">
+          <div><div className="text-xs font-bold">Business Unit View</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>Filter every dashboard KPI, table and trend by Business Unit.</div></div>
+          <select aria-label="Dashboard Business Unit filter" value={businessUnit} onChange={e => setBusinessUnit(e.target.value)} style={{ width: 240 }}>
+            <option value="">All Business Units</option>
+            {unitOptions.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </div>
+      </Card>
       {/* Critical Alerts Block (if any exist) */}
       {criticalAlerts.length > 0 && (
         <div className="p-3 bg-[var(--red-bg)] border border-red-200 rounded-xl space-y-2">
@@ -293,7 +312,7 @@ export default function Dashboard({ dateFrom, dateTo }) {
         <div className="stat-card">
           <div className="stat-label">Completed Audits</div>
           <div className="stat-value">
-            {completed.length}
+            {scopedCompleted.length}
           </div>
           <div className="stat-delta text-[var(--text3)]">Total to date</div>
         </div>

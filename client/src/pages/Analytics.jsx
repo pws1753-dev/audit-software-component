@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useCallback } from 'react';
+import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon } from '../components/UI';
 import { findingWorkflowStatus, sanitize, showToast } from '../utils/helpers';
@@ -9,29 +9,46 @@ import {
   latestDeptAuditScore, clauseName, clauseDescription, auditScoreColorVar, filterFindingsByDateRange,
   findingMatchesDeptCode, deptValuesMatch, dedupeDeptAliases,
 } from '../utils/dashboardHelpers';
+import { businessUnitOptions, departmentsInBusinessUnit } from '../utils/businessUnits';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export default function Analytics({ dateFrom, dateTo }) {
   const { getFindings, getDepts, getCompletedAudits, currentUser, setPageAction } = useApp();
+  const [businessUnit, setBusinessUnit] = useState('');
 
   const isSpoc = currentUser?.role === 'spoc';
   const sDept = currentUser?.dept || '';
   const allFindings = getFindings();
   const allDepts = getDepts();
-  const completed = getCompletedAudits();
+  const allCompleted = getCompletedAudits();
+
+  const accessDepts = useMemo(() => isSpoc
+    ? allDepts.filter(d => deptValuesMatch(allDepts, d.code, sDept) || deptValuesMatch(allDepts, d.name, sDept))
+    : allDepts, [allDepts, isSpoc, sDept]);
+  const unitOptions = useMemo(() => businessUnitOptions(accessDepts, currentUser ? [currentUser] : []), [accessDepts, currentUser]);
+  const scopedDepts = useMemo(() => departmentsInBusinessUnit(accessDepts, businessUnit), [accessDepts, businessUnit]);
+  const recordInScope = useCallback(record => scopedDepts.some(d =>
+    deptValuesMatch(allDepts, record?.dept, d.code) || deptValuesMatch(allDepts, record?.deptName, d.code)), [allDepts, scopedDepts]);
+  const scopedFindings = useMemo(() => businessUnit
+    ? allFindings.filter(recordInScope)
+    : (isSpoc ? allFindings.filter(f => findingMatchesDeptCode(allDepts, f, sDept)) : allFindings),
+  [allFindings, allDepts, businessUnit, isSpoc, recordInScope, sDept]);
+  const completed = useMemo(() => businessUnit
+    ? allCompleted.filter(recordInScope)
+    : (isSpoc ? allCompleted.filter(recordInScope) : allCompleted),
+  [allCompleted, businessUnit, isSpoc, recordInScope]);
 
   const F = useMemo(() => {
-    const base = filterFindingsByDateRange(allFindings, dateFrom, dateTo);
-    return isSpoc ? base.filter(f => findingMatchesDeptCode(allDepts, f, sDept)) : base;
-  }, [allFindings, allDepts, dateFrom, dateTo, isSpoc, sDept]);
+    return filterFindingsByDateRange(scopedFindings, dateFrom, dateTo);
+  }, [scopedFindings, dateFrom, dateTo]);
 
-  const trendFindings = useMemo(() => (isSpoc ? allFindings.filter(f => findingMatchesDeptCode(allDepts, f, sDept)) : allFindings), [allFindings, allDepts, isSpoc, sDept]);
-  const depts = useMemo(() => dedupeDeptAliases(isSpoc ? allDepts.filter(d => deptValuesMatch(allDepts, d.code, sDept) || deptValuesMatch(allDepts, d.name, sDept)) : allDepts, allFindings, completed), [allDepts, isSpoc, sDept, allFindings, completed]);
+  const trendFindings = scopedFindings;
+  const depts = useMemo(() => dedupeDeptAliases(scopedDepts, scopedFindings, completed), [scopedDepts, scopedFindings, completed]);
 
   const closed = F.filter(f => f.status === 'closed').length;
   const capaRate = closureRate(F);
-  const overallScore = orgLatestAuditScore(completed, allFindings, depts);
+  const overallScore = orgLatestAuditScore(completed, scopedFindings, depts);
   const counts = auditFindingCounts(F);
 
   const now = new Date();
@@ -43,7 +60,7 @@ export default function Analytics({ dateFrom, dateTo }) {
     for (let m = 0; m < 12; m++) {
       const monthEnd = new Date(yr, m + 1, 0, 23, 59, 59, 999);
       const isFuture = yr > current.getFullYear() || (yr === current.getFullYear() && m > current.getMonth());
-      const auditThisMonth = latestDeptAuditInMonth(completed, allFindings, depts, deptCode, yr, m);
+      const auditThisMonth = latestDeptAuditInMonth(completed, scopedFindings, depts, deptCode, yr, m);
       const hasClosureData = !isFuture && trendFindings.some(f => {
         if (deptCode && !findingMatchesDeptCode(allDepts, f, deptCode)) return false;
         const raised = findingRaisedDate(f, yr);
@@ -65,10 +82,10 @@ export default function Analytics({ dateFrom, dateTo }) {
       data.push({ month: MONTHS[m], total: mFinds.length, closed: cl, cr, auditScore: as });
     }
     return data;
-  }, [yr, completed, allFindings, depts, trendFindings, allDepts]);
+  }, [yr, completed, scopedFindings, depts, trendFindings, allDepts]);
 
   const closureRows = useMemo(() => depts
-    .filter(d => closureTrendDeptHasData(trendFindings, d.code, yr, allDepts) || deptHasAuditInYear(completed, allFindings, depts, d.code, yr))
+    .filter(d => closureTrendDeptHasData(trendFindings, d.code, yr, allDepts) || deptHasAuditInYear(completed, scopedFindings, depts, d.code, yr))
     .map(d => {
       const md = getMonthlyData(d.code);
       const cells = md.map((cur, m) => {
@@ -85,10 +102,10 @@ export default function Analytics({ dateFrom, dateTo }) {
         return { val, arrow, color };
       });
       return { name: d.name, cells };
-    }), [depts, trendFindings, completed, allFindings, allDepts, yr, getMonthlyData]);
+    }), [depts, trendFindings, completed, scopedFindings, allDepts, yr, getMonthlyData]);
 
   const scoreRows = useMemo(() => depts
-    .filter(d => deptHasAuditInYear(completed, allFindings, depts, d.code, yr))
+    .filter(d => deptHasAuditInYear(completed, scopedFindings, depts, d.code, yr))
     .map(d => {
       const md = getMonthlyData(d.code);
       const cells = md.map(cur => {
@@ -98,7 +115,7 @@ export default function Analytics({ dateFrom, dateTo }) {
         return { val, color, bg };
       });
       return { name: d.name, cells };
-    }), [depts, completed, allFindings, yr, getMonthlyData]);
+    }), [depts, completed, scopedFindings, yr, getMonthlyData]);
 
   const aiRisk = useMemo(() => {
     const rows = depts.map(d => {
@@ -177,9 +194,9 @@ export default function Analytics({ dateFrom, dateTo }) {
     });
     doc.autoTable({
       startY: doc.lastAutoTable.finalY + 8, head: [['Department', 'Total', 'Open', 'Closed', 'Audit Score', 'Closure %']],
-      body: depts.filter(d => F.some(f => findingMatchesDeptCode(allDepts, f, d.code)) || latestDeptAuditScore(completed, allFindings, depts, d.code)).map(d => {
+      body: depts.filter(d => F.some(f => findingMatchesDeptCode(allDepts, f, d.code)) || latestDeptAuditScore(completed, scopedFindings, depts, d.code)).map(d => {
         const df = F.filter(f => findingMatchesDeptCode(allDepts, f, d.code));
-        const s = latestDeptAuditScore(completed, allFindings, depts, d.code);
+        const s = latestDeptAuditScore(completed, scopedFindings, depts, d.code);
         return [d.name, df.length, df.filter(f => f.status !== 'closed').length, df.filter(f => f.status === 'closed').length, (s && typeof s.score === 'number') ? s.score + '%' : 'N/A', closureRate(df) + '%'];
       }),
       styles: { fontSize: 9 }, headStyles: { fillColor: [37, 99, 235], textColor: 255 }, margin: { left: 14, right: 14 },
@@ -208,6 +225,15 @@ export default function Analytics({ dateFrom, dateTo }) {
 
   return (
     <div className="space-y-4">
+      <Card>
+        <div className="flex justify-between items-center gap-3 flex-wrap">
+          <div><div className="text-xs font-bold">Business Unit View</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>Filter all analytics and trends by Business Unit.</div></div>
+          <select aria-label="Analytics Business Unit filter" value={businessUnit} onChange={e => setBusinessUnit(e.target.value)} style={{ width: 240 }}>
+            <option value="">All Business Units</option>
+            {unitOptions.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </div>
+      </Card>
       {/* KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {kpis.map(([l, v, c]) => (

@@ -14,6 +14,7 @@ export default function MasterData() {
   const [editItem, setEditItem] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [cpPage, setCpPage] = useState(1);
+  const [cpSearch, setCpSearch] = useState('');
 
   const [rcEdit, setRcEdit] = useState(null); // null = add mode
 
@@ -61,9 +62,16 @@ export default function MasterData() {
     showToast('Record deleted');
   };
 
-  const cpTotalPages = Math.max(1, Math.ceil(cps.length / CP_PAGE_SIZE));
+  const normalizedCpSearch = cpSearch.trim().toLowerCase();
+  const filteredCps = normalizedCpSearch ? cps.filter(cp => {
+    const checkpointDept = depts.find(dept => [dept.code, dept.id, dept.name]
+      .some(value => String(value || '').trim().toLowerCase() === String(cp.dept || '').trim().toLowerCase()));
+    return [cp.text, cp.dept || 'All', cp.clause, cp.tip, checkpointDept?.name, checkpointDept?.businessUnit]
+      .some(value => String(value || '').toLowerCase().includes(normalizedCpSearch));
+  }) : cps;
+  const cpTotalPages = Math.max(1, Math.ceil(filteredCps.length / CP_PAGE_SIZE));
   const cpSafePage = Math.min(cpPage, cpTotalPages);
-  const pagedCps = cps.slice((cpSafePage - 1) * CP_PAGE_SIZE, cpSafePage * CP_PAGE_SIZE);
+  const pagedCps = filteredCps.slice((cpSafePage - 1) * CP_PAGE_SIZE, cpSafePage * CP_PAGE_SIZE);
 
   // ── Root Causes ──
   const saveRootCause = () => {
@@ -129,16 +137,29 @@ export default function MasterData() {
 
       {tab === 'cps' && (
         <Card>
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex justify-between items-center gap-2 mb-2 flex-wrap">
             <span className="text-xs font-bold" style={{ color: 'var(--text3)' }}>Checkpoints ({cps.length})</span>
-            {canEdit && <button className="btn btn-brand btn-sm" onClick={() => setEditItem({ text: '', clause: '', weight: 3, type: 'Yes/No', dept: '', tip: '', aiSuggestion: '' })}><Icon name="plus" /> Add</button>}
+            <div className="flex gap-2 items-center" style={{ flex: '1 1 360px', justifyContent: 'flex-end' }}>
+              <div className="relative" style={{ width: 'min(100%, 520px)' }}>
+                <Icon name="search" className="w-4 h-4" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text3)', pointerEvents: 'none' }} />
+                <input
+                  type="search"
+                  aria-label="Search internal checkpoints by topic or department"
+                  placeholder="Search by topic, department, clause or tip..."
+                  value={cpSearch}
+                  onChange={e => { setCpSearch(e.target.value); setCpPage(1); }}
+                  style={{ paddingLeft: 32 }}
+                />
+              </div>
+              {canEdit && <button className="btn btn-brand btn-sm" onClick={() => setEditItem({ text: '', clause: '', weight: 3, type: 'Yes/No', dept: '', tip: '', aiSuggestion: '' })}><Icon name="plus" /> Add</button>}
+            </div>
           </div>
           {!canEdit && <div className="info-box mb-2"><Icon name="lock" /> Only Master Admin can add/edit/delete checkpoints.</div>}
           <div className="table-wrap">
             <table>
               <thead><tr><th>Question</th><th>Clause</th><th>Dept</th><th>Risk</th>{canEdit && <th>Actions</th>}</tr></thead>
               <tbody>
-                {pagedCps.map(cp => (
+                {pagedCps.length === 0 ? <tr><td colSpan={canEdit ? 5 : 4} style={{ textAlign: 'center', color: 'var(--text3)', padding: 16 }}>No checkpoints match your search.</td></tr> : pagedCps.map(cp => (
                   <tr key={cp.id}>
                     <td className="max-w-[260px]" style={{ fontSize: 12 }}>{cp.text}</td>
                     <td><Badge type="b-blue">{cp.clause || '—'}</Badge></td>
@@ -153,8 +174,8 @@ export default function MasterData() {
               </tbody>
             </table>
           </div>
-          <Pagination total={cps.length} page={cpSafePage} pageSize={CP_PAGE_SIZE} onChange={setCpPage} />
-          <div className="text-[11px] mt-1" style={{ color: 'var(--text3)' }}>{cps.length} checkpoint(s)</div>
+          <Pagination total={filteredCps.length} page={cpSafePage} pageSize={CP_PAGE_SIZE} onChange={setCpPage} />
+          <div className="text-[11px] mt-1" style={{ color: 'var(--text3)' }}>{normalizedCpSearch ? `${filteredCps.length} of ${cps.length}` : cps.length} checkpoint(s)</div>
         </Card>
       )}
 
