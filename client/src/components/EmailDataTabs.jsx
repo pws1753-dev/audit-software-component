@@ -114,6 +114,17 @@ export default function EmailDataTabs({ tab }) {
     writeSyncKey('ap_email_master', getEmailMaster().map(row => row.id === record.id ? { ...row, status: nextStatus, updatedAt: new Date().toISOString() } : row), currentUser?.loginId);
     showToast(`${record.spocName || record.email} ${active ? 'deactivated' : 'activated'} for automatic emails`);
   };
+  const editEmailMaster = (record) => {
+    // User-derived rows are display-only projections until an admin chooses to
+    // edit one. Give the projection a real Email Master id so saving the form
+    // converts it into a normal, independently manageable record.
+    const { derivedFromUsers, ...editable } = record;
+    setEmEdit({
+      ...editable,
+      id: derivedFromUsers ? `em_${record.deptCode || genId('dept')}` : record.id,
+      status: record.status || 'active',
+    });
+  };
   const downloadEmailSample = () => {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     const ws = window.XLSX.utils.json_to_sheet([{ SPOCName: 'A. Gupta', EmailID: 'spoc@example.com', DepartmentName: 'Stores', ReportingToName: 'Manager', ReportingToEmail: 'manager@example.com', HODBUHEmail: 'hod@example.com', ManagementEmail: 'management@example.com', Status: 'Active' }]);
@@ -270,11 +281,11 @@ export default function EmailDataTabs({ tab }) {
                       <td>{r.department || r.deptCode}</td>
                       <td><div>{r.reportingName}</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>{r.reportingEmail}</div></td>
                       <td><Badge type={r.derivedFromUsers ? 'b-blue' : String(r.status || 'active').toLowerCase() === 'active' ? 'b-green' : 'b-gray'}>{r.derivedFromUsers ? 'User account' : String(r.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'}</Badge></td>
-                      {canEdit && <td>{r.derivedFromUsers ? <span className="text-[10px]" style={{ color: 'var(--text3)' }}>Managed in Admin Panel</span> : <div className="flex gap-1">
-                        <button className={`btn btn-sm ${String(r.status || 'active').toLowerCase() === 'active' ? 'btn-amber' : 'btn-brand'}`} onClick={() => toggleEmailMasterStatus(r)}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}</button>
-                        <button className={`btn btn-sm ${emEdit?.id === r.id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setEmEdit(r)}>Edit</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteEmailMaster(r.id)}>Delete</button>
-                      </div>}</td>}
+                      {canEdit && <td><div className="flex gap-1">
+                        {!r.derivedFromUsers && <button className={`btn btn-sm ${String(r.status || 'active').toLowerCase() === 'active' ? 'btn-amber' : 'btn-brand'}`} onClick={() => toggleEmailMasterStatus(r)}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}</button>}
+                        <button className={`btn btn-sm ${emEdit?.deptCode === r.deptCode ? 'btn-primary' : 'btn-ghost'}`} onClick={() => editEmailMaster(r)}>Edit</button>
+                        {!r.derivedFromUsers && <button className="btn btn-danger btn-sm" onClick={() => deleteEmailMaster(r.id)}>Delete</button>}
+                      </div></td>}
                     </tr>
                   ))}
                 </tbody>
