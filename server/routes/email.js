@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { getCollection } = require('../lib/mongo');
-const { businessUnitAccess, isBusinessUnitHead } = require('../lib/business-unit-access');
+const { businessUnitAccess } = require('../lib/business-unit-access');
 const { getMailer, parseRecipients, SMTP_FROM } = require('../lib/mailer');
 const { wrapAsync, requireAdmin, requireRoles, requirePageAccess, actorOf } = require('../middleware/auth');
 const { mergeEmailLogs } = require('../lib/sync-helpers');
@@ -59,6 +59,16 @@ router.post('/audit-submission', wrapAsync(async (req, res) => {
   requireRoles(req, ['admin', 'auditor'], 'Only Master Admin or Auditor can send audit report emails');
   const auditIds = (Array.isArray(req.body && req.body.auditIds) ? req.body.auditIds : []).map(String).slice(0, 30);
   const dryRun = Boolean(req.body && req.body.dryRun);
+  if (req.authUser.role !== 'admin') {
+    const collection = await getCollection();
+    const [departments, audits] = await Promise.all([collection.findOne({ key: 'ap_depts' }), collection.findOne({ key: 'ap_completed_audits' })]);
+    const access = businessUnitAccess(req.authUser, departments?.value);
+    if (access.scoped) {
+      const requested = new Set(auditIds);
+      const allowedIds = new Set((audits?.value || []).filter(audit => access.allows(audit)).flatMap(audit => [audit.id, audit.ref].filter(Boolean).map(String)));
+      if ([...requested].some(id => !allowedIds.has(id))) return res.status(403).json({ ok: false, error: 'Audit is outside your assigned Business Units' });
+    }
+  }
   res.json(await sendAuditSubmissionEmails({ auditIds, dryRun, by: actorOf(req) }));
 }));
 
@@ -101,12 +111,15 @@ router.post('/template-test', wrapAsync(async (req, res) => {
 // POST /api/email/nc-reminder : the CAPA "Remind" button. One reminder per NC per day.
 router.post('/nc-reminder', wrapAsync(async (req, res) => {
   requireRoles(req, ['admin', 'auditor', 'manager'], 'Only Master Admin, Auditor or Manager can send reminders');
-  if (isBusinessUnitHead(req.authUser)) {
+  if (req.authUser.role !== 'admin') {
     const collection = await getCollection();
     const [departments, findings] = await Promise.all([collection.findOne({ key: 'ap_depts' }), collection.findOne({ key: 'ap_finds' })]);
-    const findingId = String(req.body?.findingId || '').trim();
-    const finding = (findings?.value || []).find(f => String(f.id || '') === findingId || String(f.ref || '') === findingId);
-    if (!businessUnitAccess(req.authUser, departments?.value).allows(finding)) return res.status(403).json({ ok: false, error: 'Finding is outside your assigned Business Units' });
+    const access = businessUnitAccess(req.authUser, departments?.value);
+    if (access.scoped) {
+      const findingId = String(req.body?.findingId || '').trim();
+      const finding = (findings?.value || []).find(f => String(f.id || '') === findingId || String(f.ref || '') === findingId);
+      if (!access.allows(finding)) return res.status(403).json({ ok: false, error: 'Finding is outside your assigned Business Units' });
+    }
   }
   const result = await sendNcReminder({ findingId: req.body && req.body.findingId, by: actorOf(req) });
   res.status(result.ok ? 200 : (result.throttled ? 429 : 400)).json(result);
@@ -134,10 +147,11 @@ router.post('/run', wrapAsync(async (req, res) => {
 
 // POST /api/email/log
 router.post('/log', wrapAsync(async (req, res) => {
-  if (isBusinessUnitHead(req.authUser)) return res.status(403).json({ ok: false, error: 'Business Unit Heads cannot access global email logs' });
+  const collection = await getCollection();
+  const departments = await collection.findOne({ key: 'ap_depts' });
+  if (businessUnitAccess(req.authUser, departments?.value).scoped) return res.status(403).json({ ok: false, error: 'Business Unit accounts cannot access global email logs' });
   const log = req.body && req.body.log;
   if (!log || typeof log !== 'object') return res.status(400).json({ ok: false, error: 'Email log is required' });
-  const collection = await getCollection();
   const current = await collection.findOne({ key: 'ap_email_logs' });
   const now = new Date();
   const value = mergeEmailLogs(current && current.value, [log], current && current.clearedAt);

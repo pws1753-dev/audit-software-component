@@ -6,6 +6,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
+const compression = require('compression');
 const { getCollection, shutdown } = require('./lib/mongo');
 const crypto = require('crypto');
 const { requireApiAuth, wrapAsync } = require('./middleware/auth');
@@ -27,6 +28,9 @@ app.disable('x-powered-by');
 // req.protocol and the Secure cookie flag reflect the real client connection.
 app.set('trust proxy', 1);
 
+// Sync responses can exceed 1 MB for global accounts. Compress JSON and static
+// assets before they cross the network; small responses skip the CPU overhead.
+app.use(compression({ threshold: 1024 }));
 app.use(securityHeaders);
 app.use(noStoreApi);
 app.use(corsMiddleware);
@@ -82,7 +86,14 @@ app.use('/api', (_req, res) => res.status(404).json({ ok: false, error: 'Not fou
 // In local dev the build is absent and Vite serves :5173 with its own /api proxy.
 const CLIENT_DIST = path.resolve(__dirname, '../client/dist');
 if (fs.existsSync(path.join(CLIENT_DIST, 'index.html'))) {
-  app.use(express.static(CLIENT_DIST));
+  app.use(express.static(CLIENT_DIST, {
+    etag: true,
+    setHeaders: (res, filePath) => {
+      const name = path.basename(filePath);
+      if (/-[A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(name)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      else if (name !== 'index.html') res.setHeader('Cache-Control', 'public, max-age=86400');
+    },
+  }));
   // Client-side routes (react-router) must fall back to index.html. /api never
   // reaches here — the 404 handler above already terminated those requests.
   app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(CLIENT_DIST, 'index.html')));

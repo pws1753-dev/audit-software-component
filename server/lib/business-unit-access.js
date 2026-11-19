@@ -2,12 +2,33 @@
 
 const unitKey = value => String(value || '').trim().toLowerCase();
 const deptKey = value => unitKey(value).replace(/\([^)]*\)/g, '').replace(/&|\band\b/g, '').replace(/[^a-z0-9]/g, '');
-const isBusinessUnitHead = user => !!user && user.role === 'manager' && user.accessScope === 'businessUnit';
+// Explicit BU isolation is a data boundary, not a role permission. Older code
+// limited it to managers, so viewer-style BU accounts silently got global data.
+const isBusinessUnitHead = user => !!user && user.role !== 'admin' && user.accessScope === 'businessUnit';
 
 function businessUnitAccess(user, departments) {
-  const scoped = isBusinessUnitHead(user);
-  const units = new Set((Array.isArray(user?.businessUnits) ? user.businessUnits : []).map(unitKey).filter(Boolean));
   const depts = Array.isArray(departments) ? departments : [];
+  const configuredUnits = new Map();
+  depts.forEach(d => {
+    const clean = String(d?.businessUnit || '').trim();
+    if (clean && !configuredUnits.has(unitKey(clean))) configuredUnits.set(unitKey(clean), clean);
+  });
+  const explicit = isBusinessUnitHead(user);
+  // Legacy BU accounts store the unit in `dept` (buh.cr) or in a BUH/HUH login
+  // (cdbuh). Only an exact configured unit and an explicit BU-head marker are
+  // accepted; arbitrary login names never grant or widen access.
+  const inferredByDept = user?.role !== 'admin' ? configuredUnits.get(unitKey(user?.dept)) : '';
+  const loginCompact = deptKey(user?.loginId);
+  const inferredByLogin = user?.role !== 'admin' && /buh|huh/.test(loginCompact)
+    ? [...configuredUnits.entries()].find(([, label]) => {
+      const unitCompact = deptKey(label);
+      return [`buh${unitCompact}`, `huh${unitCompact}`, `${unitCompact}buh`, `${unitCompact}huh`].includes(loginCompact);
+    })?.[1]
+    : '';
+  const inferredUnit = inferredByDept || inferredByLogin;
+  const scoped = explicit || !!inferredUnit;
+  const assignedUnits = explicit ? (Array.isArray(user?.businessUnits) ? user.businessUnits : []) : [inferredUnit];
+  const units = new Set(assignedUnits.map(unitKey).filter(Boolean));
   const allowedDept = d => units.has(unitKey(d.businessUnit));
   const resolve = value => {
     const raw = unitKey(value);
@@ -49,7 +70,11 @@ function businessUnitAccess(user, departments) {
       if (key === 'ap_finds' && matches.some(f => ['auditId', 'auditRef'].some(field => row[field] !== f[field]))) return fail();
     }
   };
-  return { scoped, allows, filter, assertWrite };
+  return {
+    scoped,
+    units: [...units].map(key => configuredUnits.get(key) || assignedUnits.find(value => unitKey(value) === key) || key),
+    allows, filter, assertWrite,
+  };
 }
 
 module.exports = { businessUnitAccess, isBusinessUnitHead };

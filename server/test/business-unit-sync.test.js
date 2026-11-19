@@ -67,6 +67,17 @@ test('full sync and direct key reads enforce identical BU boundaries', async () 
   assert.equal(admin.value.length, 2);
 });
 
+test('BU scope is enforced for viewer-style BU accounts, not only managers', async () => {
+  reset();
+  const user = { id: 'buh.CR', role: 'viewer', dept: 'CR' };
+  const full = await request('get', '/', { user });
+  assert.equal(full.user.accessScope, 'businessUnit');
+  assert.deepEqual(full.user.businessUnits, ['CR']);
+  assert.deepEqual(full.data.ap_depts.value.map(d => d.code), ['PRD']);
+  assert.deepEqual(full.data.ap_finds.value.map(f => f.id), ['f2']);
+  assert.deepEqual(full.data.ap_learns.value.map(l => l.id), ['l2']);
+});
+
 test('PUT and bulk save visible findings without dropping hidden records', async () => {
   for (const bulk of [false, true]) {
     reset();

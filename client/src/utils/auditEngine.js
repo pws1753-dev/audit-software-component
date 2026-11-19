@@ -4,7 +4,7 @@
 export const AUDIT_KEY = 'ap_active_audit';
 export const SESSION_KEY = 'ap_audit_session';
 export const CAPA_DUE_DEFAULTS = { critical: 7, major: 15, minor: 30, obs: 45 };
-export const EMPTY_SESSION = { answers: {}, findings: {}, notes: {}, genNotes: '' };
+export { EMPTY_SESSION } from './auditSession.js';
 
 export const STD_META = {
   as9100d: { id: 'as9100d', label: 'AS9100 Rev D', short: 'AS9100D', color: '#c0392b', bg: '#fef2f2', border: '#fca5a5', badge: 'b-red' },

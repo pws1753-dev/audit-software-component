@@ -1,5 +1,4 @@
-import { genId } from './helpers';
-import { deptRecordForValue, deptValuesMatch } from './dashboardHelpers';
+import { deptRecordForValue } from './dashboardHelpers';
 import { externalAuditDate } from './externalAudit';
 
 export const ADHOC_TEMPLATE_COLUMNS = [
@@ -104,7 +103,7 @@ export function downloadAdhocTemplate(depts = []) {
   window.XLSX.writeFile(wb, 'OnePWS_Adhoc_Audit_Template.xlsx');
 }
 
-export function parseAdhocWorkbook(fileData, { depts = [], users = [], defaultDeptCode = '', defaultAuditor = '' }) {
+export function parseAdhocWorkbook(fileData, { depts = [], defaultDeptCode = '' }) {
   if (!window.XLSX) throw new Error('Excel parser is loading, please try again');
   const wb = window.XLSX.read(fileData, { type: 'array', cellDates: true, cellFormula: false });
   const sheetName = wb.SheetNames[0];

@@ -4,7 +4,7 @@ import { notifyAuditSubmitted } from '../utils/auditMail';
 import { Card, Badge, Icon, ConfirmModal } from '../components/UI';
 import { fmtDate, showToast, today, genId, SEV_BADGE } from '../utils/helpers';
 import { buildChecklist, EMPTY_SESSION, STD_META } from '../utils/auditEngine';
-import { downloadAdhocTemplate, parseAdhocWorkbook, ASSESSMENTS, SEVERITIES } from '../utils/adhocAudit';
+import { downloadAdhocTemplate, parseAdhocWorkbook } from '../utils/adhocAudit';
 import { auditFindingCounts, scoreFromFindingCounts } from '../utils/dashboardHelpers';
 
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];

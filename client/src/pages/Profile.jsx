@@ -15,6 +15,7 @@ export default function Profile() {
     pw2: '',
   });
   const [saving, setSaving] = useState(false);
+  const departmentLocked = currentUser?.role !== 'admin' && currentUser?.accessScope === 'businessUnit';
 
   const save = async () => {
     const name = form.name.trim();
@@ -63,9 +64,10 @@ export default function Profile() {
             <div><label className="form-label">Role</label><input value={ROLE_LABELS[currentUser?.role] || currentUser?.role || ''} disabled /></div>
             <div>
               <label className="form-label">Department</label>
-              <select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))}>
+              <select value={form.dept} onChange={e => setForm(p => ({ ...p, dept: e.target.value }))} disabled={departmentLocked} title={departmentLocked ? 'Business Unit assignments are managed by an administrator' : undefined}>
                 <option value="">All</option>
                 {depts.map(d => <option key={d.code} value={d.code}>{d.name}</option>)}
+                {form.dept && !depts.some(d => d.code === form.dept) && <option value={form.dept}>{form.dept}</option>}
               </select>
             </div>
           </div>

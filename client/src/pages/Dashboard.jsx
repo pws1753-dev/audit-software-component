@@ -21,7 +21,7 @@ import {
   dedupeDeptAliases,
   delayDays
 } from '../utils/dashboardHelpers';
-import { businessUnitOptions, departmentsInBusinessUnit } from '../utils/businessUnits';
+import { assignedBusinessUnits, businessUnitOptions, departmentsInBusinessUnit, isBusinessUnitScoped } from '../utils/businessUnits';
 
 const recordMatchesDepartments = (depts, record, scopedDepts) => scopedDepts.some(d =>
   deptValuesMatch(depts, record?.dept, d.code) || deptValuesMatch(depts, record?.deptName, d.code));
@@ -48,6 +48,13 @@ export default function Dashboard({ dateFrom, dateTo }) {
   const rawFindings = getFindings();
   const depts = getDepts();
   const completed = getCompletedAudits();
+  const buScoped = isBusinessUnitScoped(currentUser);
+  const assignedUnits = useMemo(() => assignedBusinessUnits(currentUser), [currentUser]);
+  const lockedBusinessUnit = buScoped && assignedUnits.length === 1 ? assignedUnits[0] : '';
+
+  useEffect(() => {
+    if (buScoped) setBusinessUnit(lockedBusinessUnit);
+  }, [buScoped, lockedBusinessUnit]);
 
   const accessDepts = useMemo(() => {
     const role = currentUser?.role || 'viewer';
@@ -254,11 +261,18 @@ export default function Dashboard({ dateFrom, dateTo }) {
     <div className="space-y-4">
       <Card>
         <div className="flex justify-between items-center gap-3 flex-wrap">
-          <div><div className="text-xs font-bold">Business Unit View</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>Filter every dashboard KPI, table and trend by Business Unit.</div></div>
-          <select aria-label="Dashboard Business Unit filter" value={businessUnit} onChange={e => setBusinessUnit(e.target.value)} style={{ width: 240 }}>
-            <option value="">All Business Units</option>
-            {unitOptions.map(unit => <option key={unit} value={unit}>{unit}</option>)}
-          </select>
+          <div><div className="text-xs font-bold">Business Unit View</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>{buScoped ? 'Your dashboard is locked to the Business Unit assigned to this account.' : 'Filter every dashboard KPI, table and trend by Business Unit.'}</div></div>
+          {buScoped ? (
+            <div className="flex gap-2 flex-wrap justify-end" aria-label="Assigned Business Units">
+              {assignedUnits.map(unit => <Badge key={unit} type="b-blue">{unit}</Badge>)}
+              {!assignedUnits.length && <Badge type="b-red">No Business Unit assigned</Badge>}
+            </div>
+          ) : (
+            <select aria-label="Dashboard Business Unit filter" value={businessUnit} onChange={e => setBusinessUnit(e.target.value)} style={{ width: 240 }}>
+              <option value="">All Business Units</option>
+              {unitOptions.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+            </select>
+          )}
         </div>
       </Card>
       {/* Critical Alerts Block (if any exist) */}

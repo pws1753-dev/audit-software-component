@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Icon } from './UI';
 import { apiFetch } from '../utils/api';
@@ -18,10 +18,6 @@ export default function Login() {
   const [fpPw2, setFpPw2] = useState('');
   const [fpStep2, setFpStep2] = useState(false);
   const [fpLoading, setFpLoading] = useState(false);
-
-  useEffect(() => {
-    if (window.lucide) window.lucide.createIcons();
-  });
 
   const doLogin = async () => {
     setError('');

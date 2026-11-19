@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../utils/api';
 import { showToast, mediaUrl, isImageMedia, prepareUploadDataUrl } from '../utils/helpers';
+import { loadLucide } from '../utils/externalLibraries';
 
 // Lucide icon wrapper — uses the globally loaded lucide library
 export function Icon({ name, className = '', style }) {
@@ -14,11 +15,9 @@ export function Icon({ name, className = '', style }) {
       iconEl.className = 'ico-svg';
       containerRef.current.appendChild(iconEl);
 
-      if (window.lucide && window.lucide.createIcons) {
-        window.lucide.createIcons({
-          root: containerRef.current
-        });
-      }
+      loadLucide().then(() => {
+        if (containerRef.current) window.lucide.createIcons({ root: containerRef.current });
+      }).catch(() => {});
     }
   }, [name]);
 
@@ -74,7 +73,7 @@ export function Tabs({ tabs, active, onChange }) {
   );
 }
 
-export function StatCard({ label, value, delta, color, icon }) {
+export function StatCard({ label, value, delta, color }) {
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>

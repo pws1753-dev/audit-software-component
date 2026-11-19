@@ -50,4 +50,11 @@ test('reminders are allowed by finding ID/ref only within assigned units', async
 
 test('global email-log endpoint cannot return logs to a BUH', async () => {
   assert.equal((await request(email, 'post', '/log', { log: { subject: 'Test' } })).status, 403);
+  assert.equal((await request(email, 'post', '/log', { log: { subject: 'Test' } }, { id: 'buh.cr', role: 'viewer', dept: 'CR' })).status, 403);
+});
+
+test('legacy inferred BU manager cannot remind a finding from another unit', async () => {
+  const user = { id: 'buh.cr', role: 'manager', dept: 'CR' };
+  assert.equal((await request(email, 'post', '/nc-reminder', { findingId: 'f2' }, user)).ok, true);
+  assert.equal((await request(email, 'post', '/nc-reminder', { findingId: 'f1' }, user)).status, 403);
 });

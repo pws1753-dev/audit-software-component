@@ -1,10 +1,11 @@
+/* oxlint-disable react/only-export-components -- provider and its hook intentionally share this module */
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { SYNC_KEYS, normalizeFindingsData, loadPermissions, genId } from '../utils/helpers';
 import { mergeEmailRules } from '../utils/emailRules';
 import { dedupeDeptAliases } from '../utils/dashboardHelpers';
 import { apiFetch } from '../utils/api';
 import { signIn, signOut, fetchCurrentUser } from '../utils/authApi';
-import { EMPTY_SESSION } from '../utils/auditEngine';
+import { EMPTY_SESSION } from '../utils/auditSession';
 
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);

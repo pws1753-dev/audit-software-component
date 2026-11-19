@@ -166,7 +166,7 @@ export async function prepareUploadDataUrl(file) {
         const out = canvas.toDataURL('image/jpeg', quality);
         if (out.length <= MAX_UPLOAD_DATA_URL_CHARS) return out;
       }
-    } catch (_err) { /* fall through to the size check below */ }
+    } catch { /* fall through to the size check below */ }
   }
   if (original.length > MAX_UPLOAD_DATA_URL_CHARS) throw new Error(`${file.name} is too large to upload (max about 3 MB for non-photo files)`);
   return original;

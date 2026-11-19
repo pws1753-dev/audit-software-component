@@ -11,3 +11,17 @@ export function departmentsInBusinessUnit(departments, businessUnit) {
   if (!selected) return departments || [];
   return (departments || []).filter(dept => String(dept.businessUnit || '').trim().toLowerCase() === selected);
 }
+
+export function assignedBusinessUnits(user) {
+  if (!user || user.role === 'admin' || user.accessScope !== 'businessUnit') return [];
+  const units = new Map();
+  (Array.isArray(user.businessUnits) ? user.businessUnits : []).forEach(value => {
+    const clean = String(value || '').trim();
+    if (clean && !units.has(clean.toLowerCase())) units.set(clean.toLowerCase(), clean);
+  });
+  return [...units.values()];
+}
+
+export function isBusinessUnitScoped(user) {
+  return !!user && user.role !== 'admin' && user.accessScope === 'businessUnit';
+}

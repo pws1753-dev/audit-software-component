@@ -29,12 +29,27 @@ test('BUH sees only assigned units, using department codes, IDs and legacy names
   assert.equal(access.allows(null), false);
 });
 
-test('empty or removed assignments fail closed; admin, auditor and legacy roles retain access', () => {
+test('empty or removed assignments fail closed; every assigned non-admin role is scoped', () => {
   assert.deepEqual(businessUnitAccess({ ...head, businessUnits: [] }, departments).filter('ap_finds', findings), []);
   assert.deepEqual(businessUnitAccess(head, []).filter('ap_finds', findings), []);
-  for (const user of [{ role: 'admin', accessScope: 'businessUnit' }, { role: 'auditor' }, { role: 'manager' }, { role: 'spoc' }, { role: 'viewer' }]) {
+  for (const role of ['auditor', 'manager', 'spoc', 'viewer']) {
+    assert.deepEqual(businessUnitAccess({ role, accessScope: 'businessUnit', businessUnits: ['CR'] }, departments).filter('ap_finds', findings).map(f => f.id), ['f2']);
+  }
+  for (const user of [{ role: 'admin', accessScope: 'businessUnit', businessUnits: ['CR'] }, { role: 'auditor' }, { role: 'manager' }, { role: 'spoc' }, { role: 'viewer' }]) {
     assert.equal(businessUnitAccess(user, departments).filter('ap_finds', findings), findings);
   }
+});
+
+test('legacy BU account is inferred from an exact configured Business Unit in dept', () => {
+  const access = businessUnitAccess({ id: 'buh.cr', role: 'viewer', dept: 'CR' }, departments);
+  assert.equal(access.scoped, true);
+  assert.deepEqual(access.units, ['CR']);
+  assert.deepEqual(access.filter('ap_finds', findings).map(f => f.id), ['f2']);
+  assert.equal(businessUnitAccess({ role: 'viewer', dept: 'unknown' }, departments).scoped, false);
+  assert.equal(businessUnitAccess({ role: 'admin', dept: 'CR' }, departments).scoped, false);
+  assert.deepEqual(businessUnitAccess({ loginId: 'cdbuh', role: 'viewer' }, departments).units, ['CD']);
+  assert.deepEqual(businessUnitAccess({ loginId: 'HUH.CR', role: 'viewer' }, departments).units, ['CR']);
+  assert.equal(businessUnitAccess({ loginId: 'user.cr', role: 'viewer' }, departments).scoped, false);
 });
 
 test('all related collections are scoped and unstructured sources cannot leak findings', () => {

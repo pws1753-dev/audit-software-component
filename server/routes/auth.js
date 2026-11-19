@@ -16,6 +16,7 @@ const { saveOtp, deleteOtp, consumeAttempt } = require('../lib/otp-store');
 const { issueSessionCookie } = require('../lib/authjs');
 const limiter = require('../lib/rate-limit');
 const { getMailer } = require('../lib/mailer');
+const { businessUnitAccess } = require('../lib/business-unit-access');
 
 const SMTP_FROM = process.env.SMTP_FROM || (process.env.SMTP_USER ? `OnePWS AuditPro <${process.env.SMTP_USER}>` : undefined);
 const RESET_WINDOW_MS = 15 * 60 * 1000;
@@ -52,11 +53,17 @@ router.put('/profile', wrapAsync(async (req, res) => {
   const idx = users.findIndex(u => u && String(u.id || '') === String(req.authUser.id || ''));
   if (idx < 0) return res.status(404).json({ ok: false, error: 'Account not found' });
   const current = users[idx];
+  const departments = await collection.findOne({ key: 'ap_depts' });
+  const access = businessUnitAccess(current, departments?.value);
+  if (access.scoped && dept !== String(current.dept || '').trim()) {
+    return res.status(403).json({ ok: false, error: 'Business Unit account department can only be changed by an administrator' });
+  }
   const nextUser = normalizeUserForStorage({ ...current, name, email, dept, avatar: name.substring(0, 2).toUpperCase(), ...(password ? { password } : {}) }, current);
   const nextUsers = users.slice(); nextUsers[idx] = nextUser;
   const updatedAt = await saveUsers(collection, nextUsers, current.loginId || 'profile-update');
   if (password) await issueSessionCookie(req, res, nextUser);
-  res.json({ ok: true, user: publicUser(nextUser), updatedAt });
+  const safeUser = publicUser(nextUser);
+  res.json({ ok: true, user: access.scoped ? { ...safeUser, accessScope: 'businessUnit', businessUnits: access.units } : safeUser, updatedAt });
 }));
 
 // POST /api/auth/admin-reset-password

@@ -1,29 +1,31 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { useApp } from './context/AppContext';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import Login from './components/Login';
 import { Toast } from './components/UI';
+import { loadExcel, loadJsPdf, loadPdfJs } from './utils/externalLibraries';
 
-// Pages
-import Dashboard from './pages/Dashboard';
-import Analytics from './pages/Analytics';
-import Findings from './pages/Findings';
-import CAPA from './pages/CAPA';
-import Planning from './pages/Planning';
-import Execution from './pages/Execution';
-import Reports from './pages/Reports';
-import Learnings from './pages/Learnings';
-import Media from './pages/Media';
-import MasterData from './pages/MasterData';
-import EmailCenter from './pages/EmailCenter';
-import AdminPanel from './pages/AdminPanel';
-import MyTasks from './pages/MyTasks';
-import ManagerPanel from './pages/ManagerPanel';
-import MasterTracker from './pages/MasterTracker';
-import OcpManual from './pages/OcpManual';
-import ImportData from './pages/ImportData';
-import Profile from './pages/Profile';
+// Each module is downloaded only when opened. This keeps Excel/PDF/admin code out
+// of the login and first-dashboard bundle.
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Findings = lazy(() => import('./pages/Findings'));
+const CAPA = lazy(() => import('./pages/CAPA'));
+const Planning = lazy(() => import('./pages/Planning'));
+const Execution = lazy(() => import('./pages/Execution'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Learnings = lazy(() => import('./pages/Learnings'));
+const Media = lazy(() => import('./pages/Media'));
+const MasterData = lazy(() => import('./pages/MasterData'));
+const EmailCenter = lazy(() => import('./pages/EmailCenter'));
+const AdminPanel = lazy(() => import('./pages/AdminPanel'));
+const MyTasks = lazy(() => import('./pages/MyTasks'));
+const ManagerPanel = lazy(() => import('./pages/ManagerPanel'));
+const MasterTracker = lazy(() => import('./pages/MasterTracker'));
+const OcpManual = lazy(() => import('./pages/OcpManual'));
+const ImportData = lazy(() => import('./pages/ImportData'));
+const Profile = lazy(() => import('./pages/Profile'));
 
 export default function App() {
   const { currentUser, currentPage, canAccess, authChecked } = useApp();
@@ -33,6 +35,13 @@ export default function App() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [appliedDate, setAppliedDate] = useState({ from: '', to: '' });
+
+  useEffect(() => {
+    const excelPages = new Set(['analytics', 'findings', 'capa', 'planning', 'reports', 'learnings', 'mastertracker', 'importdata', 'masterdata', 'emailcenter']);
+    if (excelPages.has(currentPage)) loadExcel().catch(() => {});
+    if (['analytics', 'reports', 'mastertracker'].includes(currentPage)) loadJsPdf().catch(() => {});
+    if (currentPage === 'ocp') loadPdfJs().catch(() => {});
+  }, [currentPage]);
 
   if (!authChecked) {
     return (
@@ -104,7 +113,9 @@ export default function App() {
 
         {/* Content Wrapper */}
         <main className="content-wrapper" id="content-container">
-          {renderActivePage()}
+          <Suspense fallback={<div className="flex items-center justify-center py-16 text-sm" style={{ color: 'var(--text3)' }}>Loading module…</div>}>
+            {renderActivePage()}
+          </Suspense>
         </main>
       </div>
 

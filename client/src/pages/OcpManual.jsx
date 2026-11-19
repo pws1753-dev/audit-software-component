@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Icon } from '../components/UI';
 import { showToast } from '../utils/helpers';
+import { loadPdfJs } from '../utils/externalLibraries';
 
 const OCP_PDF_SRC = '/assets/OCP_Manual_v4.3_Complete.pdf';
 const CHAPTERS = [
@@ -50,9 +51,10 @@ export default function OcpManual() {
   };
 
   useEffect(() => {
-    if (!window.pdfjsLib) { setError('PDF viewer library is still loading. Refresh once if it does not appear.'); setLoading(false); return; }
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    window.pdfjsLib.getDocument(OCP_PDF_SRC).promise.then(pdf => {
+    loadPdfJs().then(() => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      return window.pdfjsLib.getDocument(OCP_PDF_SRC).promise;
+    }).then(pdf => {
       pdfRef.current = pdf;
       setNumPages(pdf.numPages);
       setLoading(false);
