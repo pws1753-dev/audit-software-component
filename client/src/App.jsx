@@ -6,29 +6,32 @@ import Login from './components/Login';
 import { Toast } from './components/UI';
 import { loadExcel, loadJsPdf, loadPdfJs } from './utils/externalLibraries';
 
-// Each module is downloaded only when opened. This keeps Excel/PDF/admin code out
-// of the login and first-dashboard bundle.
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Analytics = lazy(() => import('./pages/Analytics'));
-const Findings = lazy(() => import('./pages/Findings'));
-const CAPA = lazy(() => import('./pages/CAPA'));
-const Planning = lazy(() => import('./pages/Planning'));
-const Execution = lazy(() => import('./pages/Execution'));
-const Reports = lazy(() => import('./pages/Reports'));
-const Learnings = lazy(() => import('./pages/Learnings'));
-const Media = lazy(() => import('./pages/Media'));
-const MasterData = lazy(() => import('./pages/MasterData'));
-const EmailCenter = lazy(() => import('./pages/EmailCenter'));
-const AdminPanel = lazy(() => import('./pages/AdminPanel'));
-const MyTasks = lazy(() => import('./pages/MyTasks'));
-const ManagerPanel = lazy(() => import('./pages/ManagerPanel'));
-const MasterTracker = lazy(() => import('./pages/MasterTracker'));
-const OcpManual = lazy(() => import('./pages/OcpManual'));
-const ImportData = lazy(() => import('./pages/ImportData'));
-const Profile = lazy(() => import('./pages/Profile'));
+// Each module is downloaded separately. Frequently used, permitted modules are
+// prefetched just after data sync, so navigation stays instant without making the
+// login screen wait for the whole application.
+const PAGE_LOADERS = {
+  dashboard: () => import('./pages/Dashboard'), analytics: () => import('./pages/Analytics'),
+  findings: () => import('./pages/Findings'), capa: () => import('./pages/CAPA'),
+  planning: () => import('./pages/Planning'), execution: () => import('./pages/Execution'),
+  reports: () => import('./pages/Reports'), learnings: () => import('./pages/Learnings'),
+  media: () => import('./pages/Media'), masterdata: () => import('./pages/MasterData'),
+  emailcenter: () => import('./pages/EmailCenter'), adminpanel: () => import('./pages/AdminPanel'),
+  mytasks: () => import('./pages/MyTasks'), managerpanel: () => import('./pages/ManagerPanel'),
+  mastertracker: () => import('./pages/MasterTracker'), ocp: () => import('./pages/OcpManual'),
+  importdata: () => import('./pages/ImportData'), profile: () => import('./pages/Profile'),
+};
+const Dashboard = lazy(PAGE_LOADERS.dashboard); const Analytics = lazy(PAGE_LOADERS.analytics);
+const Findings = lazy(PAGE_LOADERS.findings); const CAPA = lazy(PAGE_LOADERS.capa);
+const Planning = lazy(PAGE_LOADERS.planning); const Execution = lazy(PAGE_LOADERS.execution);
+const Reports = lazy(PAGE_LOADERS.reports); const Learnings = lazy(PAGE_LOADERS.learnings);
+const Media = lazy(PAGE_LOADERS.media); const MasterData = lazy(PAGE_LOADERS.masterdata);
+const EmailCenter = lazy(PAGE_LOADERS.emailcenter); const AdminPanel = lazy(PAGE_LOADERS.adminpanel);
+const MyTasks = lazy(PAGE_LOADERS.mytasks); const ManagerPanel = lazy(PAGE_LOADERS.managerpanel);
+const MasterTracker = lazy(PAGE_LOADERS.mastertracker); const OcpManual = lazy(PAGE_LOADERS.ocp);
+const ImportData = lazy(PAGE_LOADERS.importdata); const Profile = lazy(PAGE_LOADERS.profile);
 
 export default function App() {
-  const { currentUser, currentPage, canAccess, authChecked } = useApp();
+  const { currentUser, currentPage, canAccess, authChecked, syncStatus } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Date filters passed from Topbar to active views
@@ -42,6 +45,16 @@ export default function App() {
     if (['analytics', 'reports', 'mastertracker'].includes(currentPage)) loadJsPdf().catch(() => {});
     if (currentPage === 'ocp') loadPdfJs().catch(() => {});
   }, [currentPage]);
+
+  useEffect(() => {
+    if (!currentUser || syncStatus !== 'synced') return undefined;
+    const timer = window.setTimeout(() => {
+      ['dashboard', 'analytics', 'findings', 'capa', 'reports', 'learnings', 'media', 'mytasks', 'managerpanel', 'ocp']
+        .filter(page => page === 'ocp' || canAccess(page))
+        .forEach(page => PAGE_LOADERS[page]().catch(() => {}));
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [currentUser, syncStatus, canAccess]);
 
   if (!authChecked) {
     return (
