@@ -52,6 +52,13 @@ test('legacy BU account is inferred from an exact configured Business Unit in de
   assert.equal(businessUnitAccess({ loginId: 'user.cr', role: 'viewer' }, departments).scoped, false);
 });
 
+test('a regular user inherits BU scope from the assigned department code', () => {
+  const access = businessUnitAccess({ loginId: 'spoc.ccr', role: 'viewer', dept: 'PRD', accessScope: 'legacy' }, departments);
+  assert.equal(access.scoped, true);
+  assert.deepEqual(access.units, ['CR']);
+  assert.deepEqual(access.filter('ap_finds', findings).map(f => f.id), ['f2']);
+});
+
 test('all related collections are scoped and unstructured sources cannot leak findings', () => {
   const access = businessUnitAccess(head, departments);
   for (const key of ['ap_completed_audits', 'ap_planned_audits', 'ap_learns', 'ap_media_library', 'ap_email_master']) {

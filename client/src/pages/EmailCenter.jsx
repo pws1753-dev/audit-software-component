@@ -5,6 +5,7 @@ import { showToast } from '../utils/helpers';
 import { EMAIL_TYPES, deptRuleOf, isDeptTypeEnabled, isValidEmail } from '../utils/emailRules';
 import { apiFetch } from '../utils/api';
 import EmailDataTabs from '../components/EmailDataTabs';
+import { emailMasterWithUsers } from '../utils/emailMaster';
 
 const BUCKET_LABEL = {
   upcoming_reminder: 'Upcoming Reminder',
@@ -45,10 +46,10 @@ function Toggle({ checked, onChange, disabled }) {
 }
 
 export default function EmailCenter() {
-  const { getEmailRules, getDepts, getEmailMaster, getRequiredCcEmails, getEmailLogs, writeSyncKey, currentUser } = useApp();
+  const { getEmailRules, getDepts, getUsers, getEmailMaster, getRequiredCcEmails, getEmailLogs, writeSyncKey, currentUser } = useApp();
   const rules = getEmailRules();
   const depts = getDepts();
-  const emailMaster = getEmailMaster();
+  const emailMaster = emailMasterWithUsers(getEmailMaster(), getUsers(), depts);
   const globalCc = getRequiredCcEmails();
   const logs = getEmailLogs();
 

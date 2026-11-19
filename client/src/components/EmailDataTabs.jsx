@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Card, Badge, Icon, ConfirmModal, EmptyState } from './UI';
 import { showToast, genId } from '../utils/helpers';
 import { apiFetch } from '../utils/api';
+import { emailMasterWithUsers } from '../utils/emailMaster';
 
 function deptCodeFromName(name, depts) {
   const clean = String(name || '').trim().replace(/\s+/g, ' ');
@@ -42,7 +43,7 @@ const LOG_FILTERS = [['all', 'All'], ['auto', 'Automatic reminders'], ['audit', 
 const LOG_PAGE = 50;
 
 export default function EmailDataTabs({ tab }) {
-  const { getDepts, getEmailMaster, getEmailTemplates, getEmailLogs, getRequiredCcEmails, writeSyncKey, currentUser, setPageAction } = useApp();
+  const { getDepts, getUsers, getEmailMaster, getEmailTemplates, getEmailLogs, getRequiredCcEmails, writeSyncKey, currentUser, setPageAction } = useApp();
   const [emEdit, setEmEdit] = useState(null);
   const [emSearch, setEmSearch] = useState('');
   const [ccInput, setCcInput] = useState('');
@@ -57,7 +58,7 @@ export default function EmailDataTabs({ tab }) {
   const [logLimit, setLogLimit] = useState(LOG_PAGE);
   const [confirmClear, setConfirmClear] = useState(false);
   const depts = getDepts();
-  const emailMaster = getEmailMaster();
+  const emailMaster = emailMasterWithUsers(getEmailMaster(), getUsers(), depts);
   const templates = getEmailTemplates();
   const emailLogs = getEmailLogs();
   const ccList = getRequiredCcEmails();
@@ -268,12 +269,12 @@ export default function EmailDataTabs({ tab }) {
                       <td><div className="font-bold">{r.spocName}</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>{r.email}</div></td>
                       <td>{r.department || r.deptCode}</td>
                       <td><div>{r.reportingName}</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>{r.reportingEmail}</div></td>
-                      <td><Badge type={String(r.status || 'active').toLowerCase() === 'active' ? 'b-green' : 'b-gray'}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'}</Badge></td>
-                      {canEdit && <td><div className="flex gap-1">
+                      <td><Badge type={r.derivedFromUsers ? 'b-blue' : String(r.status || 'active').toLowerCase() === 'active' ? 'b-green' : 'b-gray'}>{r.derivedFromUsers ? 'User account' : String(r.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'}</Badge></td>
+                      {canEdit && <td>{r.derivedFromUsers ? <span className="text-[10px]" style={{ color: 'var(--text3)' }}>Managed in Admin Panel</span> : <div className="flex gap-1">
                         <button className={`btn btn-sm ${String(r.status || 'active').toLowerCase() === 'active' ? 'btn-amber' : 'btn-brand'}`} onClick={() => toggleEmailMasterStatus(r)}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}</button>
                         <button className={`btn btn-sm ${emEdit?.id === r.id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setEmEdit(r)}>Edit</button>
                         <button className="btn btn-danger btn-sm" onClick={() => deleteEmailMaster(r.id)}>Delete</button>
-                      </div></td>}
+                      </div>}</td>}
                     </tr>
                   ))}
                 </tbody>

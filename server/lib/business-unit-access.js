@@ -14,10 +14,17 @@ function businessUnitAccess(user, departments) {
     if (clean && !configuredUnits.has(unitKey(clean))) configuredUnits.set(unitKey(clean), clean);
   });
   const explicit = isBusinessUnitHead(user);
-  // Legacy BU accounts store the unit in `dept` (buh.cr) or in a BUH/HUH login
-  // (cdbuh). Only an exact configured unit and an explicit BU-head marker are
-  // accepted; arbitrary login names never grant or widen access.
+  // Legacy BU accounts store a unit name in `dept` (buh.cr), while regular users
+  // store a department code (CRC). Resolve both through Master Data so every
+  // non-admin account inherits its department's BU boundary.
   const inferredByDept = user?.role !== 'admin' ? configuredUnits.get(unitKey(user?.dept)) : '';
+  const assignedDepartments = user?.role !== 'admin'
+    ? depts.filter(d => [d.code, d.id, d.name].some(value => value && unitKey(value) === unitKey(user?.dept)))
+    : [];
+  const departmentUnits = [...new Map(assignedDepartments
+    .map(d => String(d.businessUnit || '').trim()).filter(Boolean)
+    .map(value => [unitKey(value), value])).values()];
+  const inferredByDepartment = departmentUnits.length === 1 ? departmentUnits[0] : '';
   const loginCompact = deptKey(user?.loginId);
   const inferredByLogin = user?.role !== 'admin' && /buh|huh/.test(loginCompact)
     ? [...configuredUnits.entries()].find(([, label]) => {
@@ -25,7 +32,7 @@ function businessUnitAccess(user, departments) {
       return [`buh${unitCompact}`, `huh${unitCompact}`, `${unitCompact}buh`, `${unitCompact}huh`].includes(loginCompact);
     })?.[1]
     : '';
-  const inferredUnit = inferredByDept || inferredByLogin;
+  const inferredUnit = inferredByDept || inferredByDepartment || inferredByLogin;
   const scoped = explicit || !!inferredUnit;
   const assignedUnits = explicit ? (Array.isArray(user?.businessUnits) ? user.businessUnits : []) : [inferredUnit];
   const units = new Set(assignedUnits.map(unitKey).filter(Boolean));
