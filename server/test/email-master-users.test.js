@@ -23,3 +23,12 @@ test('user emails augment an existing department row without mutating saved data
   assert.equal(result[0].email, 'old@onepws.com, rohit.joshi@onepws.com');
   assert.equal(stored[0].email, 'old@onepws.com');
 });
+
+test('a deleted Email Master tombstone prevents a user-derived row from reappearing', async () => {
+  const { emailMasterWithUsers } = await import('../../client/src/utils/emailMaster.js');
+  const departments = [{ code: 'CRPUR', name: 'Purchase-CR' }];
+  const stored = [{ id: 'em_CRPUR', deptCode: 'CRPUR', department: 'Purchase-CR', status: 'inactive', deleted: true }];
+  const users = [{ role: 'spoc', dept: 'CRPUR', name: 'Rohit', email: 'rohit.joshi@onepws.com', active: true }];
+  const result = emailMasterWithUsers(stored, users, departments);
+  assert.deepEqual(result, []);
+});

@@ -39,12 +39,15 @@ export function emailMasterWithUsers(emailMaster, users, departments) {
       });
       return;
     }
-    matching.forEach(row => {
+    matching.filter(row => !row.deleted).forEach(row => {
       row.email = unique([...splitEmails(row.email), ...spocs.map(user => user.email)]).join(', ');
       row.spocName = unique([row.spocName, ...spocs.map(user => user.name)]).join(', ');
       row.reportingEmail = unique([...splitEmails(row.reportingEmail), ...managers.map(user => user.email)]).join(', ');
       row.reportingName = unique([row.reportingName, ...managers.map(user => user.name)]).join(', ');
     });
   });
-  return rows;
+  // A deleted row remains as a hidden tombstone. This prevents an active portal
+  // user from immediately recreating the Email Master row, without deleting or
+  // disabling that person's login account.
+  return rows.filter(row => !row.deleted);
 }

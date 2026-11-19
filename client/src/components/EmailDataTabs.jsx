@@ -57,6 +57,7 @@ export default function EmailDataTabs({ tab }) {
   const [logSearch, setLogSearch] = useState('');
   const [logLimit, setLogLimit] = useState(LOG_PAGE);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmDeleteEmail, setConfirmDeleteEmail] = useState(null);
   const depts = getDepts();
   const emailMaster = emailMasterWithUsers(getEmailMaster(), getUsers(), depts);
   const templates = getEmailTemplates();
@@ -104,14 +105,34 @@ export default function EmailDataTabs({ tab }) {
     setEmEdit(null);
     showToast('Email master saved');
   };
-  const deleteEmailMaster = (id) => {
-    writeSyncKey('ap_email_master', getEmailMaster().filter(x => x.id !== id), currentUser?.loginId);
-    showToast('Deleted');
+  const storedEmailRecord = (record, changes = {}) => {
+    const { derivedFromUsers, ...stored } = record;
+    return {
+      ...stored,
+      id: derivedFromUsers ? `em_${record.deptCode || genId('dept')}` : record.id,
+      createdAt: stored.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...changes,
+    };
+  };
+  const deleteEmailMaster = (record) => {
+    const deleted = storedEmailRecord(record, { status: 'inactive', deleted: true });
+    const rows = getEmailMaster().slice();
+    const idx = rows.findIndex(row => row.id === deleted.id);
+    if (idx >= 0) rows[idx] = deleted; else rows.unshift(deleted);
+    writeSyncKey('ap_email_master', rows, currentUser?.loginId);
+    setConfirmDeleteEmail(null);
+    if (emEdit?.deptCode === record.deptCode) setEmEdit(null);
+    showToast('Email record deleted. The user login remains active.');
   };
   const toggleEmailMasterStatus = (record) => {
     const active = String(record.status || 'active').toLowerCase() === 'active';
     const nextStatus = active ? 'inactive' : 'active';
-    writeSyncKey('ap_email_master', getEmailMaster().map(row => row.id === record.id ? { ...row, status: nextStatus, updatedAt: new Date().toISOString() } : row), currentUser?.loginId);
+    const changed = storedEmailRecord(record, { status: nextStatus, deleted: false });
+    const rows = getEmailMaster().slice();
+    const idx = rows.findIndex(row => row.id === changed.id);
+    if (idx >= 0) rows[idx] = changed; else rows.unshift(changed);
+    writeSyncKey('ap_email_master', rows, currentUser?.loginId);
     showToast(`${record.spocName || record.email} ${active ? 'deactivated' : 'activated'} for automatic emails`);
   };
   const editEmailMaster = (record) => {
@@ -161,7 +182,7 @@ export default function EmailDataTabs({ tab }) {
             reportingEmail: joinEmailList(row.ReportingToEmail || row['Reporting To Email'] || row['Reporting To (Email)'] || ''),
             hodEmail: joinEmailList(row.HODBUHEmail || row['HOD/BUH Email'] || row['HOD/BUH Mail'] || ''),
             managementEmail: joinEmailList(row.ManagementEmail || row['Management Email'] || ''),
-            status: String(row.Status || 'Active').toLowerCase() === 'inactive' ? 'inactive' : 'active',
+            status: String(row.Status || 'Active').toLowerCase() === 'inactive' ? 'inactive' : 'active', deleted: false,
             createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           };
           const idx = rows.findIndex(r => r.deptCode === dept.code);
@@ -282,9 +303,9 @@ export default function EmailDataTabs({ tab }) {
                       <td><div>{r.reportingName}</div><div className="text-[10px]" style={{ color: 'var(--text3)' }}>{r.reportingEmail}</div></td>
                       <td><Badge type={r.derivedFromUsers ? 'b-blue' : String(r.status || 'active').toLowerCase() === 'active' ? 'b-green' : 'b-gray'}>{r.derivedFromUsers ? 'User account' : String(r.status || 'active').toLowerCase() === 'active' ? 'Active' : 'Inactive'}</Badge></td>
                       {canEdit && <td><div className="flex gap-1">
-                        {!r.derivedFromUsers && <button className={`btn btn-sm ${String(r.status || 'active').toLowerCase() === 'active' ? 'btn-amber' : 'btn-brand'}`} onClick={() => toggleEmailMasterStatus(r)}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}</button>}
+                        <button className={`btn btn-sm ${String(r.status || 'active').toLowerCase() === 'active' ? 'btn-amber' : 'btn-brand'}`} onClick={() => toggleEmailMasterStatus(r)}>{String(r.status || 'active').toLowerCase() === 'active' ? 'Deactivate' : 'Activate'}</button>
                         <button className={`btn btn-sm ${emEdit?.deptCode === r.deptCode ? 'btn-primary' : 'btn-ghost'}`} onClick={() => editEmailMaster(r)}>Edit</button>
-                        {!r.derivedFromUsers && <button className="btn btn-danger btn-sm" onClick={() => deleteEmailMaster(r.id)}>Delete</button>}
+                        <button className="btn btn-danger btn-sm" onClick={() => setConfirmDeleteEmail(r)}>Delete</button>
                       </div></td>}
                     </tr>
                   ))}
@@ -441,6 +462,12 @@ export default function EmailDataTabs({ tab }) {
           </div>
         </div>
       )}
+      <ConfirmModal
+        open={Boolean(confirmDeleteEmail)}
+        message="Delete this Email Master entry? Automatic emails for this department will stop, but the linked user login will remain active."
+        onCancel={() => setConfirmDeleteEmail(null)}
+        onConfirm={() => deleteEmailMaster(confirmDeleteEmail)}
+      />
     </>
   );
 }
