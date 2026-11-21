@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useApp } from '../context/AppContext';
 import { Card, Badge, EmptyState, Icon } from '../components/UI';
 import { buildAuditReportPdf } from '../utils/auditReportPdf';
-import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, sanitize, showToast } from '../utils/helpers';
+import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, sanitize, showToast, uniqueFindingsByRef } from '../utils/helpers';
 import {
   auditFindingCounts, latestDeptAudit, latestDeptAuditScore,
   completedAuditsSorted, auditScoreColorVar, parseAuditDate, filterFindingsByDateRange,
@@ -119,7 +119,7 @@ export default function Reports({ dateFrom, dateTo }) {
   const genDeptExcel = (d) => {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     const XLSX = window.XLSX;
-    const df = deptFindings(d.code);
+    const df = uniqueFindingsByRef(deptFindings(d.code));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(df.map(f => ({ ID: f.ref, Source: sourceLabel(f), 'Audit Ref': f.auditRef || '', Topic: f.topic || '', Description: f.desc, Severity: SEV_LABEL[f.sev] || f.sev, Clause: f.clause, Owner: f.responsibleOwner || '', Due: f.due, Status: STAT_LABEL[f.status] || f.status }))), d.code);
     XLSX.writeFile(wb, 'OnePWS_' + d.code + '_Report_' + Date.now() + '.xlsx');

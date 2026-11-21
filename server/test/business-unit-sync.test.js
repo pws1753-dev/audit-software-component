@@ -89,6 +89,24 @@ test('department SPOC sync cannot return a sibling department in the same BU', a
   assert.deepEqual(full.data.ap_finds.value.map(f => f.id), ['f2']);
 });
 
+test('assigned manager and viewer sync is restricted to their department', async () => {
+  for (const role of ['manager', 'viewer']) {
+    reset();
+    const full = await request('get', '/', { user: { id: `${role}.prd`, role, dept: 'PRD' } });
+    assert.equal(full.user.accessScope, 'department');
+    assert.deepEqual(full.data.ap_finds.value.map(f => f.id), ['f2']);
+  }
+});
+
+test('sync reads return one canonical row per finding reference', async () => {
+  reset();
+  data.get('ap_finds').value.push({ id: 'duplicate-id', ref: 'NC1', dept: 'DES', desc: 'Visible duplicate' });
+  const full = await request('get', '/', { user: { role: 'admin' } });
+  const direct = await request('get', '/:key', { key: 'ap_finds', user: { role: 'admin' } });
+  assert.equal(full.data.ap_finds.value.filter(f => f.ref === 'NC1').length, 1);
+  assert.equal(direct.value.filter(f => f.ref === 'NC1').length, 1);
+});
+
 test('department SPOC saves preserve sibling-department findings', async () => {
   reset();
   data.get('ap_depts').value.push({ code: 'ENG', name: 'Engineering', businessUnit: 'CR' });

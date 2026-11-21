@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import FindingTextarea from '../components/FindingTextarea';
 import { Card, Badge, Icon, EvidenceUploader } from '../components/UI';
 import { apiFetch } from '../utils/api';
-import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today, sanitize, findingWorkflowStatus, mediaUrl, isImageMedia } from '../utils/helpers';
+import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today, sanitize, findingWorkflowStatus, mediaUrl, isImageMedia, uniqueFindingsByRef } from '../utils/helpers';
 import { managerDeptCodes, filterFindingsByDateRange, findingMatchesDeptCode, deptCodeInList, deptValuesMatch } from '../utils/dashboardHelpers';
 
 const STEPS = ['Logged', 'In Progress', 'Submit For Review', 'Closed'];
@@ -167,7 +167,7 @@ export default function CAPA({ dateFrom, dateTo }) {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     const XLSX = window.XLSX;
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(open.map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Severity: SEV_LABEL[f.sev], Due: f.due, Status: STAT_LABEL[f.status], ClosureEvidence: f.closureEvidence || '' }))), 'CAPA');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(uniqueFindingsByRef(open).map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Severity: SEV_LABEL[f.sev], Due: f.due, Status: STAT_LABEL[f.status], ClosureEvidence: f.closureEvidence || '' }))), 'CAPA');
     XLSX.writeFile(wb, 'OnePWS_CAPA_' + Date.now() + '.xlsx');
     showToast('CAPA exported');
   };

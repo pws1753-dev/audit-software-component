@@ -111,7 +111,16 @@ function mergeUsersForSync(existing, incoming) {
 }
 
 // ── FINDINGS MERGE ──
-function findingKey(f) { return String((f && (f.id || f.ref)) || '').trim(); }
+// The finding number is the business identity shown in every register and report.
+// Imports and repeated audit submissions historically generated a fresh `id` for the
+// same reference, so keying by id allowed duplicate CAPAs to accumulate forever.
+// Prefer the normalized reference; id is only a fallback for genuinely unnumbered rows.
+function findingKey(f) {
+  const ref = String((f && f.ref) || '').trim().toLowerCase();
+  if (ref) return `ref:${ref}`;
+  const id = String((f && f.id) || '').trim().toLowerCase();
+  return id ? `id:${id}` : '';
+}
 function findingUpdatedTime(f) { const t = Date.parse((f && (f.updatedAt || f.findingUpdatedAt)) || ''); return Number.isFinite(t) ? t : 0; }
 function findingDeletedTime(f) { const t = Date.parse((f && f.deletedAt) || ''); return Number.isFinite(t) ? t : 0; }
 function isDraftFindingLeak(f) { return !!(f && String(f.status||'').toLowerCase()==='draft' && f.audit && f.session); }
@@ -244,16 +253,29 @@ function chooseFindingForSync(current,incoming) {
   return mergeFindingWorkflowData(incoming,current);
 }
 
+function dedupeFindingsForSync(value) {
+  if(!Array.isArray(value))return [];
+  const rows=[]; const indexes=new Map();
+  value.map(normalizeFindingSyncState).filter(Boolean).forEach(f=>{
+    const k=findingKey(f);
+    if(!k){rows.push(f);return;}
+    if(!indexes.has(k)){indexes.set(k,rows.length);rows.push(f);return;}
+    const index=indexes.get(k);
+    rows[index]=chooseFindingForSync(rows[index],f);
+  });
+  return rows;
+}
+
 function mergeFindingsForSync(currentValue,incomingValue) {
   if(!Array.isArray(incomingValue))return incomingValue;
-  incomingValue=incomingValue.map(normalizeFindingSyncState).filter(Boolean);
+  incomingValue=dedupeFindingsForSync(incomingValue);
   if(!Array.isArray(currentValue)||!currentValue.length)return incomingValue;
-  currentValue=currentValue.map(normalizeFindingSyncState).filter(Boolean);
+  currentValue=dedupeFindingsForSync(currentValue);
   const currentByKey=new Map(); currentValue.forEach(f=>{const k=findingKey(f);if(k)currentByKey.set(k,f);});
   const seen=new Set();
   const merged=incomingValue.map(f=>{const k=findingKey(f);if(!k)return f;seen.add(k);return chooseFindingForSync(currentByKey.get(k),f);});
   currentValue.forEach(f=>{const k=findingKey(f);if(k&&!seen.has(k))merged.push(f);});
-  return merged;
+  return dedupeFindingsForSync(merged);
 }
 
 // ── NOTIFICATIONS MERGE ──
@@ -386,6 +408,6 @@ function sanitizeSyncValueForClient(key,value,requester) {
 module.exports = {
   SYNC_KEYS, assertSyncKey, syncValuesEqual, sanitizeSyncValueForClient,
   mergeEmailLogs, mergeUsersForSync, normalizeUserForStorage,
-  mergeFindingsForSync, mergeNotificationsForSync, mergeAuditDraftsForSync,
+  dedupeFindingsForSync, mergeFindingsForSync, mergeNotificationsForSync, mergeAuditDraftsForSync,
   mergeCompletedAuditsForSync, repairCompletedAuditScores
 };

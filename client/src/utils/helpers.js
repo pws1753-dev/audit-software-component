@@ -61,7 +61,7 @@ export function findingWorkflowStatus(f) {
 export function normalizeFindingsData(data) {
   if (!Array.isArray(data)) return { value: [], changed: !!data };
   const seen = new Set(); let changed = false;
-  const value = data.map((raw, idx) => {
+  const normalized = data.map((raw, idx) => {
     const f = (raw && typeof raw === 'object') ? raw : {};
     const updates = {};
     const id = String(f.id || '').trim();
@@ -72,6 +72,8 @@ export function normalizeFindingsData(data) {
     if (!Array.isArray(f.activityLog)) { updates.activityLog = []; changed = true; }
     return Object.keys(updates).length ? Object.assign({}, f, updates) : f;
   });
+  const value = uniqueFindingsByRef(normalized);
+  if (value.length !== normalized.length) changed = true;
   return { value, changed };
 }
 
@@ -93,9 +95,19 @@ export function uniqueFindingsByRef(findings) {
     }
     const index = indexes.get(key);
     const current = result[index];
-    const currentTime = Date.parse(current?.updatedAt || current?.findingUpdatedAt || '') || 0;
-    const incomingTime = Date.parse(f?.updatedAt || f?.findingUpdatedAt || '') || 0;
-    if (incomingTime > currentTime) result[index] = f;
+    const timeOf = row => Math.max(...[
+      row?.updatedAt, row?.findingUpdatedAt, row?.closureSubmittedAt,
+      row?.decisionAt, row?.closedAt, row?.deletedAt,
+    ].map(v => Date.parse(v || '') || 0));
+    const currentTime = timeOf(current), incomingTime = timeOf(f);
+    const workflowRank = row => ({ closed: 5, 'pending-closure': 4, submitted: 4, delayed: 3, 'in-progress': 3, open: 2 }[findingWorkflowStatus(row)] || 1);
+    const completeness = row => [row?.desc, row?.clause, row?.due, row?.closureEvidence, row?.closureSubmittedBy, row?.decision]
+      .filter(v => String(v || '').trim()).length + (row?.closureFiles?.length || 0) + (row?.activityLog?.length || 0);
+    if (incomingTime > currentTime
+      || (incomingTime === currentTime && workflowRank(f) > workflowRank(current))
+      || (incomingTime === currentTime && workflowRank(f) === workflowRank(current) && completeness(f) > completeness(current))) {
+      result[index] = f;
+    }
   });
   return result;
 }

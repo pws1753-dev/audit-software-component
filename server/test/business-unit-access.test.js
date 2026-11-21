@@ -46,7 +46,8 @@ test('legacy BU account is inferred from an exact configured Business Unit in de
   assert.equal(access.scoped, true);
   assert.deepEqual(access.units, ['CR']);
   assert.deepEqual(access.filter('ap_finds', findings).map(f => f.id), ['f2']);
-  assert.equal(businessUnitAccess({ role: 'viewer', dept: 'unknown' }, departments).scoped, false);
+  assert.equal(businessUnitAccess({ role: 'viewer', dept: 'unknown' }, departments).scoped, true);
+  assert.deepEqual(businessUnitAccess({ role: 'viewer', dept: 'unknown' }, departments).filter('ap_finds', findings), []);
   assert.equal(businessUnitAccess({ role: 'admin', dept: 'CR' }, departments).scoped, false);
   assert.deepEqual(businessUnitAccess({ loginId: 'cdbuh', role: 'viewer' }, departments).units, ['CD']);
   assert.deepEqual(businessUnitAccess({ loginId: 'HUH.CR', role: 'viewer' }, departments).units, ['CR']);
@@ -61,6 +62,44 @@ test('a department SPOC is restricted to the assigned department, not its whole 
   assert.equal(access.departmentScoped, true);
   assert.deepEqual(access.departments, ['PRD']);
   assert.deepEqual(access.filter('ap_finds', rows).map(f => f.id), ['f2']);
+});
+
+test('an exact department code wins when it matches a Business Unit label', () => {
+  const collision = [
+    { id: 'dept-cd', code: 'CD', name: 'CD Design', businessUnit: 'CD' },
+    { id: 'dept-pex', code: 'PEX', name: 'Project Execution', businessUnit: 'CD' },
+  ];
+  const rows = [
+    { id: 'design', ref: 'CD-001', dept: 'CD' },
+    { id: 'project', ref: 'PEX-001', dept: 'PEX' },
+  ];
+  const spoc = businessUnitAccess({ loginId: 'spoc.des', role: 'spoc', dept: 'CD' }, collision);
+  assert.equal(spoc.departmentScoped, true);
+  assert.deepEqual(spoc.filter('ap_finds', rows).map(f => f.id), ['design']);
+  const head = businessUnitAccess({ loginId: 'cdbuh', role: 'viewer' }, collision);
+  assert.equal(head.businessUnitScoped, true);
+  assert.deepEqual(head.filter('ap_finds', rows).map(f => f.id), ['design', 'project']);
+});
+
+test('assigned managers and viewers are department scoped unless BU access is explicit', () => {
+  for (const role of ['manager', 'viewer']) {
+    const access = businessUnitAccess({ loginId: `${role}.prd`, role, dept: 'PRD' }, departments);
+    assert.equal(access.departmentScoped, true);
+    assert.deepEqual(access.filter('ap_finds', findings).map(f => f.id), ['f2']);
+  }
+  const globalViewer = businessUnitAccess({ loginId: 'management', role: 'viewer', dept: '' }, departments);
+  assert.equal(globalViewer.scoped, false);
+  assert.equal(globalViewer.filter('ap_finds', findings), findings);
+});
+
+test('finding sync coalesces duplicate references with different generated IDs', () => {
+  const merged = mergeFindingsForSync([], [
+    { id: 'generated-old', ref: 'PEC-2026-003', dept: 'PRD', status: 'open', desc: 'same finding' },
+    { id: 'generated-new', ref: ' pec-2026-003 ', dept: 'PRD', status: 'pending-closure', capaStatus: 'submitted', closureEvidence: 'proof', closureSubmittedAt: '2026-11-20T10:00:00Z' },
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].id, 'generated-new');
+  assert.equal(merged[0].closureEvidence, 'proof');
 });
 
 test('all related collections are scoped and unstructured sources cannot leak findings', () => {

@@ -21,3 +21,15 @@ test('finding exports do not collapse different references that reused an import
   ]);
   assert.equal(result.length, 2);
 });
+
+test('incoming finding normalization removes duplicate references before any screen uses them', async () => {
+  const { normalizeFindingsData } = await import('../../client/src/utils/helpers.js');
+  const result = normalizeFindingsData([
+    { id: 'old-id', ref: 'PEC-2026-010', status: 'open', desc: 'old row' },
+    { id: 'new-id', ref: ' pec-2026-010 ', status: 'pending-closure', closureEvidence: 'done', closureSubmittedAt: '2026-11-20T10:00:00Z' },
+  ]);
+  assert.equal(result.changed, true);
+  assert.equal(result.value.length, 1);
+  assert.equal(result.value[0].id, 'new-id');
+  assert.equal(result.value[0].closureEvidence, 'done');
+});

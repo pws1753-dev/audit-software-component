@@ -23,6 +23,7 @@ const { wrapAsync, requireAdmin, requirePageAccess, actorOf, invalidateAuthCache
 const {
   SYNC_KEYS, assertSyncKey, syncValuesEqual, sanitizeSyncValueForClient,
   mergeEmailLogs, mergeUsersForSync, mergeFindingsForSync,
+  dedupeFindingsForSync,
   mergeNotificationsForSync, mergeAuditDraftsForSync, mergeCompletedAuditsForSync,
   repairCompletedAuditScores
 } = require('../lib/sync-helpers');
@@ -96,6 +97,7 @@ router.get('/', wrapAsync(async (req, res) => {
   const user = access.scoped ? { ...rawUser, accessScope: access.scope, businessUnits: access.units, departmentAccess: access.departments } : rawUser;
   const accessVersion = crypto.createHash('sha256').update(JSON.stringify([user.role, user.accessScope, access.units, access.departments, access.scoped ? departments?.updatedAt : null])).digest('hex');
   const findingsRow = rows.find(row => row.key === 'ap_finds');
+  if (findingsRow && Array.isArray(findingsRow.value)) findingsRow.value = dedupeFindingsForSync(findingsRow.value);
   const completedRow = rows.find(row => row.key === 'ap_completed_audits');
   if (completedRow && Array.isArray(completedRow.value)) {
     completedRow.value = repairCompletedAuditScores(completedRow.value, findingsRow && findingsRow.value);
@@ -119,9 +121,10 @@ router.get('/:key', wrapAsync(async (req, res) => {
   const departments = await collection.findOne({ key: 'ap_depts' });
   const access = businessUnitAccess(req.authUser, departments?.value);
   let value = row ? row.value : null;
+  if (key === 'ap_finds' && Array.isArray(value)) value = dedupeFindingsForSync(value);
   if (key === 'ap_completed_audits' && Array.isArray(value)) {
     const findingsRow = await collection.findOne({ key: 'ap_finds' });
-    value = repairCompletedAuditScores(value, findingsRow && findingsRow.value);
+    value = repairCompletedAuditScores(value, dedupeFindingsForSync(findingsRow && findingsRow.value));
   }
   res.json({ ok: true, key, value: row ? sanitizeSyncValueForClient(key, access.filter(key, value), req.authUser) : null, updatedAt: row ? row.updatedAt : null });
 }));

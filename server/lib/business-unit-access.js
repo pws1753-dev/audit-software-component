@@ -14,12 +14,15 @@ function businessUnitAccess(user, departments) {
     if (clean && !configuredUnits.has(unitKey(clean))) configuredUnits.set(unitKey(clean), clean);
   });
   const explicit = isBusinessUnitHead(user);
-  // Legacy BU accounts may store a unit name in `dept` (for example buh.cr).
-  // Department users instead store a department code and must not inherit the unit.
-  const inferredByDept = user?.role !== 'admin' ? configuredUnits.get(unitKey(user?.dept)) : '';
   const assignedDepartments = user?.role !== 'admin'
     ? depts.filter(d => [d.code, d.id, d.name].some(value => value && unitKey(value) === unitKey(user?.dept)))
     : [];
+  // Legacy BU accounts may store a unit name in `dept`. An exact department match
+  // always wins when a code and unit share a label (for example department CD and
+  // Business Unit CD); otherwise a department SPOC could inherit the whole unit.
+  const inferredByDept = user?.role !== 'admin' && assignedDepartments.length === 0
+    ? configuredUnits.get(unitKey(user?.dept))
+    : '';
   const loginCompact = deptKey(user?.loginId);
   const inferredByLogin = user?.role !== 'admin' && /buh|huh/.test(loginCompact)
     ? [...configuredUnits.entries()].find(([, label]) => {
@@ -32,7 +35,13 @@ function businessUnitAccess(user, departments) {
   // findings. Only explicit BU accounts and recognizable legacy BUH/HUH identities
   // receive unit-wide access; SPOCs are restricted to their exact department.
   const inferredUnit = inferredByDept || inferredByLogin;
-  const departmentScoped = !explicit && !inferredUnit && user?.role === 'spoc';
+  // Any assigned operational account is department-scoped unless an administrator
+  // explicitly grants Business Unit access. Auditors intentionally remain global;
+  // managers/viewers with a department must not silently receive company-wide data.
+  // A stale/unknown department assignment fails closed (zero matching departments).
+  const hasDepartmentAssignment = Boolean(String(user?.dept || '').trim());
+  const departmentScoped = !explicit && !inferredUnit && user?.role !== 'admin' && user?.role !== 'auditor'
+    && (assignedDepartments.length > 0 || hasDepartmentAssignment || user?.role === 'spoc');
   const scoped = explicit || !!inferredUnit || departmentScoped;
   const assignedUnits = explicit ? (Array.isArray(user?.businessUnits) ? user.businessUnits : []) : [inferredUnit];
   const units = new Set(assignedUnits.map(unitKey).filter(Boolean));
