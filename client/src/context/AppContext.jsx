@@ -251,7 +251,7 @@ export function AppProvider({ children }) {
             else if (k === 'ap_permissions') { setPerms(loadPermissions(r.value)); }
             else if (DATA_KEYS.includes(k)) {
               let val = r.value;
-              if (k === 'ap_finds' && payload.user?.accessScope !== 'businessUnit') val = mergeFindingsForSync(prev.ap_finds, val);
+              if (k === 'ap_finds' && !['businessUnit', 'department'].includes(payload.user?.accessScope)) val = mergeFindingsForSync(prev.ap_finds, val);
               next[k] = applyIncoming(k, val);
             }
             syncRemoteMeta.current[k] = manifest[k]?.updatedAt || '';
@@ -290,6 +290,37 @@ export function AppProvider({ children }) {
         else setSyncStatus('error');
       }
     }, SYNC_WRITE_DEBOUNCE_MS);
+  }, [currentUser, logout]);
+
+  // Workflow submissions need a confirmed server write. The normal writer is
+  // intentionally debounced for form edits, but a user can close the tab during that
+  // delay and mistake an optimistic toast for a completed CAPA submission.
+  const writeSyncKeyNow = useCallback(async (k, v, by) => {
+    if (!apiReadyRef.current || !SYNC_KEYS.includes(k)) throw new Error('Database sync is not ready');
+    clearTimeout(syncWriteTimers.current[k]);
+    delete syncWriteTimers.current[k];
+    setSyncStatus('syncing');
+    try {
+      const saved = await apiFetch(`/api/sync/${encodeURIComponent(k)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value: v, by: by || currentUser?.loginId || 'browser' }),
+      });
+      if (DATA_KEYS.includes(k)) setSyncData(prev => ({ ...prev, [k]: applyIncoming(k, v) }));
+      syncRemoteMeta.current[k] = saved.updatedAt || '';
+      // Re-read the server's merged value when possible. The write is already
+      // confirmed, so a transient follow-up read must not report a false failure.
+      try {
+        const canonical = await apiFetch(`/api/sync/${encodeURIComponent(k)}`);
+        if (DATA_KEYS.includes(k)) setSyncData(prev => ({ ...prev, [k]: applyIncoming(k, canonical.value) }));
+        syncRemoteMeta.current[k] = canonical.updatedAt || saved.updatedAt || '';
+      } catch { /* the next normal poll will reconcile the confirmed write */ }
+      setSyncStatus('synced');
+      return v;
+    } catch (err) {
+      if (err.status === 401) logout();
+      else setSyncStatus('error');
+      throw err;
+    }
   }, [currentUser, logout]);
 
   // Multi-key imports must reach MongoDB as one request so findings, completed-audit
@@ -377,7 +408,7 @@ export function AppProvider({ children }) {
     perms, setPerms,
     currentPage, navigate,
     notifications, setNotifications, pendingCount, addNotification,
-    writeSyncKey, writeSyncBulk, addInternalCheckpoint,
+    writeSyncKey, writeSyncKeyNow, writeSyncBulk, addInternalCheckpoint,
     canAccess,
     findingsDeptFilter, setFindingsDeptFilter,
     capaSelectedId, setCapaSelectedId,
@@ -395,7 +426,7 @@ export function AppProvider({ children }) {
     perms,
     currentPage, navigate,
     notifications, pendingCount, addNotification,
-    writeSyncKey, writeSyncBulk, addInternalCheckpoint,
+    writeSyncKey, writeSyncKeyNow, writeSyncBulk, addInternalCheckpoint,
     canAccess,
     findingsDeptFilter,
     capaSelectedId,

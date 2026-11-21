@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, Badge, Tabs, Pagination, Icon } from '../components/UI';
-import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast } from '../utils/helpers';
+import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, uniqueFindingsByRef } from '../utils/helpers';
 import { managerDeptCodes, filterFindingsByDateRange, findingMatchesDeptCode, deptCodeInList } from '../utils/dashboardHelpers';
 
 const PAGE_SIZE = 15;
@@ -57,8 +57,8 @@ export default function MasterTracker({ dateFrom, dateTo }) {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     const XLSX = window.XLSX;
     let rows = [];
-    if (tab === 'findings') rows = data.map(f => ({ ID: f.ref, Dept: f.deptName, Desc: f.desc, Sev: SEV_LABEL[f.sev], Clause: f.clause, Due: f.due, Status: STAT_LABEL[f.status] }));
-    else if (tab === 'capa') rows = data.map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Due: f.due, Status: STAT_LABEL[f.status] }));
+    if (tab === 'findings') rows = uniqueFindingsByRef(data).map(f => ({ ID: f.ref, Dept: f.deptName, Desc: f.desc, Sev: SEV_LABEL[f.sev], Clause: f.clause, Due: f.due, Status: STAT_LABEL[f.status] }));
+    else if (tab === 'capa') rows = uniqueFindingsByRef(data).map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Due: f.due, Status: STAT_LABEL[f.status] }));
     else rows = data.map(l => ({ Title: l.title, Dept: l.dept || 'All', 'Problem Description': l.clause, Sev: SEV_LABEL[l.sev], 'Root Cause': l.rc, 'Preventive Action': l.pa }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), tab);
@@ -70,7 +70,7 @@ export default function MasterTracker({ dateFrom, dateTo }) {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     if (!canGlobal) { showToast('Only Master Admin and Auditor can export all department data'); return; }
     const XLSX = window.XLSX;
-    const all = getFindings();
+    const all = uniqueFindingsByRef(getFindings());
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(all.map(f => ({ ID: f.ref, Department: f.deptName, Description: f.desc, Severity: SEV_LABEL[f.sev] || f.sev, Clause: f.clause, DueDate: f.due, Status: STAT_LABEL[f.status] || f.status, Type: f.type || '', AuditRef: f.auditRef || '' }))), 'All Findings');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(all.filter(f => f.status !== 'closed').map(f => ({ Ref: f.ref, Dept: f.deptName, Issue: f.desc, Severity: SEV_LABEL[f.sev], Due: f.due, Status: STAT_LABEL[f.status], ClosureEvidence: f.closureEvidence || '' }))), 'Open CAPA');

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import FindingTextarea from '../components/FindingTextarea';
 import { Card, Badge, Pagination, ConfirmModal, Icon } from '../components/UI';
-import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today } from '../utils/helpers';
+import { SEV_BADGE, SEV_LABEL, STAT_BADGE, STAT_LABEL, showToast, today, uniqueFindingsByRef } from '../utils/helpers';
 import { managerDeptCodes, filterFindingsByDateRange, normalizeAuditSeverity, findingMatchesDeptCode, deptCodeInList } from '../utils/dashboardHelpers';
 
 const PAGE_SIZE = 15;
@@ -37,6 +37,8 @@ export default function Findings({ dateFrom, dateTo }) {
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     let list = filterFindingsByDateRange(findings, dateFrom, dateTo, ['due']);
+    if (role === 'spoc') list = list.filter(f => findingMatchesDeptCode(depts, f, currentUser?.dept));
+    else if (role === 'manager') list = list.filter(f => deptCodeInList(depts, f?.dept, codes) || deptCodeInList(depts, f?.deptName, codes));
     list = list.filter(f => {
       if (filterDept && !findingMatchesDeptCode(depts, f, filterDept)) return false;
       if (filterSev && normalizeAuditSeverity(f.sev || f.severity) !== filterSev) return false;
@@ -48,7 +50,7 @@ export default function Findings({ dateFrom, dateTo }) {
       const va = String(a[sortField] || '').toLowerCase(), vb = String(b[sortField] || '').toLowerCase();
       return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
     });
-  }, [findings, depts, dateFrom, dateTo, filterDept, filterSev, filterStatus, search, sortField, sortAsc]);
+  }, [findings, depts, dateFrom, dateTo, role, currentUser, codes, filterDept, filterSev, filterStatus, search, sortField, sortAsc]);
 
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -71,7 +73,8 @@ export default function Findings({ dateFrom, dateTo }) {
     if (!window.XLSX) { showToast('Excel loading...'); return; }
     const XLSX = window.XLSX;
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filtered.map(f => ({ ID: f.ref, Dept: f.deptName, Description: f.desc, Severity: SEV_LABEL[f.sev] || f.sev, Clause: f.clause, Due: f.due, Status: STAT_LABEL[f.status] || f.status }))), 'Findings');
+    const exportRows = uniqueFindingsByRef(filtered);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(exportRows.map(f => ({ ID: f.ref, Dept: f.deptName, Description: f.desc, Severity: SEV_LABEL[f.sev] || f.sev, Clause: f.clause, Due: f.due, Status: STAT_LABEL[f.status] || f.status }))), 'Findings');
     XLSX.writeFile(wb, `OnePWS_Findings_${today()}.xlsx`);
     showToast('Exported');
   };

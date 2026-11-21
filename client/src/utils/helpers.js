@@ -75,6 +75,31 @@ export function normalizeFindingsData(data) {
   return { value, changed };
 }
 
+// A finding reference is the user-facing identity used by every report. Historical
+// imports can contain the same reference more than once with different generated IDs;
+// exporting the raw array would therefore repeat the same finding. Keep the newest
+// copy (or the first copy when neither has a timestamp) while preserving row order.
+export function uniqueFindingsByRef(findings) {
+  const rows = Array.isArray(findings) ? findings : [];
+  const result = [];
+  const indexes = new Map();
+  rows.forEach(f => {
+    const ref = String(f?.ref || '').trim().toLowerCase();
+    const key = ref || `id:${String(f?.id || result.length).trim().toLowerCase()}`;
+    if (!indexes.has(key)) {
+      indexes.set(key, result.length);
+      result.push(f);
+      return;
+    }
+    const index = indexes.get(key);
+    const current = result[index];
+    const currentTime = Date.parse(current?.updatedAt || current?.findingUpdatedAt || '') || 0;
+    const incomingTime = Date.parse(f?.updatedAt || f?.findingUpdatedAt || '') || 0;
+    if (incomingTime > currentTime) result[index] = f;
+  });
+  return result;
+}
+
 // ── PERMISSIONS ──────────────────────────────────────
 export const DEFAULT_PERMS = {
   admin:   { ocp:1,dashboard:1,analytics:1,planning:1,execution:1,reports:1,findings:1,capa:1,learnings:1,media:1,masterdata:1,adminpanel:1,mytasks:1,managerpanel:1,mastertracker:1,importdata:1,emailcenter:1 },

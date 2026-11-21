@@ -78,6 +78,31 @@ test('BU scope is enforced for viewer-style BU accounts, not only managers', asy
   assert.deepEqual(full.data.ap_learns.value.map(l => l.id), ['l2']);
 });
 
+test('department SPOC sync cannot return a sibling department in the same BU', async () => {
+  reset();
+  data.get('ap_depts').value.push({ code: 'ENG', name: 'Engineering', businessUnit: 'CR' });
+  data.get('ap_finds').value.push({ id: 'f3', ref: 'NC3', dept: 'ENG', desc: 'Sibling' });
+  const user = { id: 'spoc.prd', loginId: 'spoc.prd', role: 'spoc', dept: 'PRD' };
+  const full = await request('get', '/', { user });
+  assert.equal(full.user.accessScope, 'department');
+  assert.deepEqual(full.user.departmentAccess, ['PRD']);
+  assert.deepEqual(full.data.ap_finds.value.map(f => f.id), ['f2']);
+});
+
+test('department SPOC saves preserve sibling-department findings', async () => {
+  reset();
+  data.get('ap_depts').value.push({ code: 'ENG', name: 'Engineering', businessUnit: 'CR' });
+  data.get('ap_finds').value.push({ id: 'f3', ref: 'NC3', dept: 'ENG', desc: 'Sibling' });
+  const user = { id: 'spoc.prd', loginId: 'spoc.prd', role: 'spoc', dept: 'PRD' };
+  await request('put', '/:key', {
+    key: 'ap_finds', user,
+    body: { value: [{ id: 'f2', ref: 'NC2', dept: 'PRD', desc: 'Updated by SPOC', updatedAt: '2026-11-21T10:00:00Z' }] },
+  });
+  assert.equal(data.get('ap_finds').value.find(f => f.id === 'f2').desc, 'Updated by SPOC');
+  assert.equal(data.get('ap_finds').value.find(f => f.id === 'f3').desc, 'Sibling');
+  assert.equal(data.get('ap_finds').value.find(f => f.id === 'f1').desc, 'Visible');
+});
+
 test('PUT and bulk save visible findings without dropping hidden records', async () => {
   for (const bulk of [false, true]) {
     reset();

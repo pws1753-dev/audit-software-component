@@ -93,8 +93,8 @@ router.get('/', wrapAsync(async (req, res) => {
   const departments = isManifest ? await collection.findOne({ key: 'ap_depts' }) : rows.find(row => row.key === 'ap_depts');
   const access = businessUnitAccess(req.authUser, departments?.value);
   const rawUser = publicUser(req.authUser);
-  const user = access.scoped ? { ...rawUser, accessScope: 'businessUnit', businessUnits: access.units } : rawUser;
-  const accessVersion = crypto.createHash('sha256').update(JSON.stringify([user.role, user.accessScope, access.units, access.scoped ? departments?.updatedAt : null])).digest('hex');
+  const user = access.scoped ? { ...rawUser, accessScope: access.scope, businessUnits: access.units, departmentAccess: access.departments } : rawUser;
+  const accessVersion = crypto.createHash('sha256').update(JSON.stringify([user.role, user.accessScope, access.units, access.departments, access.scoped ? departments?.updatedAt : null])).digest('hex');
   const findingsRow = rows.find(row => row.key === 'ap_finds');
   const completedRow = rows.find(row => row.key === 'ap_completed_audits');
   if (completedRow && Array.isArray(completedRow.value)) {

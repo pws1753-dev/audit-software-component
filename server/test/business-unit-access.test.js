@@ -35,9 +35,10 @@ test('empty or removed assignments fail closed; every assigned non-admin role is
   for (const role of ['auditor', 'manager', 'spoc', 'viewer']) {
     assert.deepEqual(businessUnitAccess({ role, accessScope: 'businessUnit', businessUnits: ['CR'] }, departments).filter('ap_finds', findings).map(f => f.id), ['f2']);
   }
-  for (const user of [{ role: 'admin', accessScope: 'businessUnit', businessUnits: ['CR'] }, { role: 'auditor' }, { role: 'manager' }, { role: 'spoc' }, { role: 'viewer' }]) {
+  for (const user of [{ role: 'admin', accessScope: 'businessUnit', businessUnits: ['CR'] }, { role: 'auditor' }, { role: 'manager' }, { role: 'viewer' }]) {
     assert.equal(businessUnitAccess(user, departments).filter('ap_finds', findings), findings);
   }
+  assert.deepEqual(businessUnitAccess({ role: 'spoc' }, departments).filter('ap_finds', findings), []);
 });
 
 test('legacy BU account is inferred from an exact configured Business Unit in dept', () => {
@@ -52,11 +53,14 @@ test('legacy BU account is inferred from an exact configured Business Unit in de
   assert.equal(businessUnitAccess({ loginId: 'user.cr', role: 'viewer' }, departments).scoped, false);
 });
 
-test('a regular user inherits BU scope from the assigned department code', () => {
-  const access = businessUnitAccess({ loginId: 'spoc.ccr', role: 'viewer', dept: 'PRD', accessScope: 'legacy' }, departments);
+test('a department SPOC is restricted to the assigned department, not its whole BU', () => {
+  const withSibling = [...departments, { id: 'd5', code: 'ENG', name: 'Engineering', businessUnit: 'CR' }];
+  const rows = [...findings, { id: 'f5', ref: 'NC5', dept: 'ENG', desc: 'Sibling department finding' }];
+  const access = businessUnitAccess({ loginId: 'spoc.ccr', role: 'spoc', dept: 'PRD', accessScope: 'legacy' }, withSibling);
   assert.equal(access.scoped, true);
-  assert.deepEqual(access.units, ['CR']);
-  assert.deepEqual(access.filter('ap_finds', findings).map(f => f.id), ['f2']);
+  assert.equal(access.departmentScoped, true);
+  assert.deepEqual(access.departments, ['PRD']);
+  assert.deepEqual(access.filter('ap_finds', rows).map(f => f.id), ['f2']);
 });
 
 test('all related collections are scoped and unstructured sources cannot leak findings', () => {

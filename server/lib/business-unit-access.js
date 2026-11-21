@@ -14,17 +14,12 @@ function businessUnitAccess(user, departments) {
     if (clean && !configuredUnits.has(unitKey(clean))) configuredUnits.set(unitKey(clean), clean);
   });
   const explicit = isBusinessUnitHead(user);
-  // Legacy BU accounts store a unit name in `dept` (buh.cr), while regular users
-  // store a department code (CRC). Resolve both through Master Data so every
-  // non-admin account inherits its department's BU boundary.
+  // Legacy BU accounts may store a unit name in `dept` (for example buh.cr).
+  // Department users instead store a department code and must not inherit the unit.
   const inferredByDept = user?.role !== 'admin' ? configuredUnits.get(unitKey(user?.dept)) : '';
   const assignedDepartments = user?.role !== 'admin'
     ? depts.filter(d => [d.code, d.id, d.name].some(value => value && unitKey(value) === unitKey(user?.dept)))
     : [];
-  const departmentUnits = [...new Map(assignedDepartments
-    .map(d => String(d.businessUnit || '').trim()).filter(Boolean)
-    .map(value => [unitKey(value), value])).values()];
-  const inferredByDepartment = departmentUnits.length === 1 ? departmentUnits[0] : '';
   const loginCompact = deptKey(user?.loginId);
   const inferredByLogin = user?.role !== 'admin' && /buh|huh/.test(loginCompact)
     ? [...configuredUnits.entries()].find(([, label]) => {
@@ -32,11 +27,19 @@ function businessUnitAccess(user, departments) {
       return [`buh${unitCompact}`, `huh${unitCompact}`, `${unitCompact}buh`, `${unitCompact}huh`].includes(loginCompact);
     })?.[1]
     : '';
-  const inferredUnit = inferredByDept || inferredByDepartment || inferredByLogin;
-  const scoped = explicit || !!inferredUnit;
+  // A department assignment is not a Business Unit Head assignment. In particular,
+  // treating a SPOC's department as its BU gave that SPOC every sibling department's
+  // findings. Only explicit BU accounts and recognizable legacy BUH/HUH identities
+  // receive unit-wide access; SPOCs are restricted to their exact department.
+  const inferredUnit = inferredByDept || inferredByLogin;
+  const departmentScoped = !explicit && !inferredUnit && user?.role === 'spoc';
+  const scoped = explicit || !!inferredUnit || departmentScoped;
   const assignedUnits = explicit ? (Array.isArray(user?.businessUnits) ? user.businessUnits : []) : [inferredUnit];
   const units = new Set(assignedUnits.map(unitKey).filter(Boolean));
-  const allowedDept = d => units.has(unitKey(d.businessUnit));
+  const assignedDeptKeys = new Set(assignedDepartments.flatMap(d => [d.code, d.id, d.name]).map(unitKey).filter(Boolean));
+  const allowedDept = d => departmentScoped
+    ? [d.code, d.id, d.name].some(value => assignedDeptKeys.has(unitKey(value)))
+    : units.has(unitKey(d.businessUnit));
   const resolve = value => {
     const raw = unitKey(value);
     if (!raw) return [];
@@ -65,7 +68,7 @@ function businessUnitAccess(user, departments) {
   };
   const assertWrite = (key, incoming, existing) => {
     if (!scoped) return;
-    const fail = () => { const err = new Error('You can only update records in your assigned Business Units'); err.statusCode = 403; throw err; };
+    const fail = () => { const err = new Error('You can only update records in your assigned department scope'); err.statusCode = 403; throw err; };
     if (!['ap_finds', 'ap_learns'].includes(key) || !Array.isArray(incoming)) return fail();
     const records = Array.isArray(existing) ? existing : [];
     for (const row of incoming) {
@@ -78,7 +81,9 @@ function businessUnitAccess(user, departments) {
     }
   };
   return {
-    scoped,
+    scoped, businessUnitScoped: scoped && !departmentScoped, departmentScoped,
+    scope: departmentScoped ? 'department' : (scoped ? 'businessUnit' : ''),
+    departments: departmentScoped ? assignedDepartments.map(d => d.code).filter(Boolean) : [],
     units: [...units].map(key => configuredUnits.get(key) || assignedUnits.find(value => unitKey(value) === key) || key),
     allows, filter, assertWrite,
   };

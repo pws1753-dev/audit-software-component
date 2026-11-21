@@ -22,7 +22,7 @@ function capaSortRank(f) {
 }
 
 export default function CAPA({ dateFrom, dateTo }) {
-  const { getFindings, getDepts, getDeptOptions, getEmailMaster, getSystemSettings, writeSyncKey, currentUser, capaSelectedId, setCapaSelectedId, setPageAction } = useApp();
+  const { getFindings, getDepts, getDeptOptions, getEmailMaster, getSystemSettings, writeSyncKey, writeSyncKeyNow, currentUser, capaSelectedId, setCapaSelectedId, setPageAction } = useApp();
   const findings = getFindings();
   const depts = getDepts();
   const role = currentUser?.role;
@@ -38,6 +38,7 @@ export default function CAPA({ dateFrom, dateTo }) {
   const [editModal, setEditModal] = useState(null);
   const [closureEv, setClosureEv] = useState('');
   const [closureFiles, setClosureFiles] = useState([]);
+  const [closureSubmitting, setClosureSubmitting] = useState(false);
   const [decisionComments, setDecisionComments] = useState('');
   const [reviewDate, setReviewDate] = useState(today());
 
@@ -115,13 +116,24 @@ export default function CAPA({ dateFrom, dateTo }) {
 
   const setDue = (due) => commit(x => ({ ...x, due, updatedAt: new Date().toISOString(), activityLog: [...(x.activityLog || []), { user: currentUser?.name || 'System', action: 'Due date -> ' + (due || 'Not set'), ts: nowStamp() }] }), 'Due date updated');
 
-  const submitClosure = () => {
+  const submitClosure = async () => {
     if (settings.spocCommentRequiredForClosure && !closureEv.trim()) { showToast('Describe the closure'); return; }
     if (settings.requireEvidenceForNCs && closureFiles.length === 0) { showToast('Evidence photo required for closure'); return; }
     // Resubmitting after a rejection must clear the stale decision, otherwise the sync
     // normalizer can read the old 'reject' as the latest verdict and reopen the finding.
-    commit(x => ({ ...x, status: 'pending-closure', capaStatus: 'submitted', closureEvidence: closureEv.trim(), closureFiles, closureSubmittedBy: currentUser?.name || currentUser?.loginId, closureDate: today(), decision: null, decisionComments: '', decisionDate: null, auditClosureDate: null, closedAt: null, closureSubmittedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), activityLog: [...(x.activityLog || []), { user: currentUser?.name || 'System', action: 'Closure submitted for review', ts: nowStamp() }] }), 'Closure submitted for review');
-    setClosureModal(null); setClosureEv(''); setClosureFiles([]);
+    const targetId = closureModal?.id;
+    const submittedAt = new Date().toISOString();
+    const updated = findings.map(x => x.id === targetId ? ({ ...x, status: 'pending-closure', capaStatus: 'submitted', closureEvidence: closureEv.trim(), closureFiles, closureSubmittedBy: currentUser?.name || currentUser?.loginId, closureDate: today(), decision: null, decisionComments: '', decisionDate: null, auditClosureDate: null, closedAt: null, closureSubmittedAt: submittedAt, updatedAt: submittedAt, activityLog: [...(x.activityLog || []), { user: currentUser?.name || 'System', action: 'Closure submitted for review', ts: nowStamp() }] }) : x);
+    setClosureSubmitting(true);
+    try {
+      await writeSyncKeyNow('ap_finds', updated, currentUser?.loginId);
+      setClosureModal(null); setClosureEv(''); setClosureFiles([]);
+      showToast('Closure submitted for review and saved');
+    } catch (err) {
+      showToast(err.message || 'Closure could not be saved. Please try again.', 6000);
+    } finally {
+      setClosureSubmitting(false);
+    }
   };
 
   const sendReminder = async (f) => {
@@ -312,7 +324,7 @@ export default function CAPA({ dateFrom, dateTo }) {
             <div className="mb-2 text-xs"><strong>{closureModal.ref}</strong>: {closureModal.desc}<div className="text-[10px]" style={{ color: 'var(--text3)' }}>{closureModal.deptName} · {closureModal.clause}</div></div>
             <div className="mb-3"><label className="form-label">Closure Explanation *</label><textarea value={closureEv} onChange={e => setClosureEv(e.target.value)} style={{ height: 80, resize: 'none' }} placeholder="Describe the corrective actions taken..." /></div>
             <div className="mb-3"><EvidenceUploader files={closureFiles} onChange={setClosureFiles} label="Closure Evidence Photos" /></div>
-            <div className="flex gap-2"><button className="btn btn-ghost flex-1" onClick={() => { setClosureModal(null); setClosureFiles([]); }}>Cancel</button><button className="btn btn-success flex-1" onClick={submitClosure}>Submit For Review</button></div>
+            <div className="flex gap-2"><button className="btn btn-ghost flex-1" disabled={closureSubmitting} onClick={() => { setClosureModal(null); setClosureFiles([]); }}>Cancel</button><button className="btn btn-success flex-1" disabled={closureSubmitting} onClick={submitClosure}>{closureSubmitting ? 'Saving…' : 'Submit For Review'}</button></div>
           </div>
         </div>
       )}

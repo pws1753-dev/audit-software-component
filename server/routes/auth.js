@@ -63,7 +63,7 @@ router.put('/profile', wrapAsync(async (req, res) => {
   const updatedAt = await saveUsers(collection, nextUsers, current.loginId || 'profile-update');
   if (password) await issueSessionCookie(req, res, nextUser);
   const safeUser = publicUser(nextUser);
-  res.json({ ok: true, user: access.scoped ? { ...safeUser, accessScope: 'businessUnit', businessUnits: access.units } : safeUser, updatedAt });
+  res.json({ ok: true, user: access.scoped ? { ...safeUser, accessScope: access.scope, businessUnits: access.units, departmentAccess: access.departments } : safeUser, updatedAt });
 }));
 
 // POST /api/auth/admin-reset-password
